@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Telerama</title>
+  <meta name="description" content="Movie picks based on your vibe, your music, your room, an era or a plot." />
+  <style>
+    :root {
+      --bg: #14100c;
+      --panel: #1e1813;
+      --line: rgba(242, 235, 217, 0.14);
+      --text: #f2ebd9;
+      --muted: #b5a88f;
+      --accent: #e0893f;
+      --accent-soft: rgba(224, 137, 63, 0.16);
+      --error: #ff8a7a;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: var(--bg); color: var(--text); font-family: 'Helvetica Neue', Arial, sans-serif; }
+    body { min-height: 100vh; padding: 0 16px 64px; }
+
+    header { max-width: 760px; margin: 0 auto; padding: 56px 0 28px; text-align: center; }
+    h1 { font-weight: 800; font-size: clamp(2.6rem, 9vw, 4.4rem); letter-spacing: .04em; }
+    h1 span { color: var(--accent); }
+    .tagline { color: var(--muted); margin-top: 10px; font-size: 1rem; line-height: 1.5; }
+
+    form { max-width: 760px; margin: 0 auto; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 24px; display: grid; gap: 18px; }
+    label { display: block; font-size: .78rem; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+    textarea, input[type=text], select {
+      width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+      padding: 12px 14px; font: inherit; font-size: 1rem; outline: none; transition: border-color .2s;
+    }
+    textarea { min-height: 84px; resize: vertical; }
+    textarea:focus, input[type=text]:focus, select:focus { border-color: var(--accent); }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 999px; padding: 7px 14px; font: inherit; font-size: .9rem; cursor: pointer; transition: all .2s; }
+    .chip:hover { border-color: var(--accent); }
+    .chip[aria-pressed=true] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+    .photo { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .photo-btn { border: 1px dashed var(--line); border-radius: 10px; padding: 12px 16px; cursor: pointer; color: var(--muted); font-size: .95rem; }
+    .photo-btn:hover { border-color: var(--accent); color: var(--text); }
+    .photo input { display: none; }
+    .preview { display: none; align-items: center; gap: 10px; }
+    .preview img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+    .preview button { background: none; border: none; color: var(--muted); cursor: pointer; font: inherit; text-decoration: underline; }
+
+    .submit { background: var(--accent); color: #1a1108; border: none; border-radius: 12px; padding: 15px; font: inherit; font-weight: 700; font-size: 1.05rem; letter-spacing: .04em; cursor: pointer; transition: transform .15s, opacity .2s; }
+    .submit:hover { transform: translateY(-1px); }
+    .submit:disabled { opacity: .55; cursor: wait; transform: none; }
+
+    .status { max-width: 760px; margin: 22px auto 0; text-align: center; color: var(--muted); min-height: 1.4em; line-height: 1.5; }
+    .status.error { color: var(--error); }
+    .read { max-width: 760px; margin: 26px auto 0; font-style: italic; color: var(--muted); text-align: center; line-height: 1.5; }
+
+    .results { max-width: 1040px; margin: 26px auto 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 18px; }
+    .card { display: flex; gap: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; text-decoration: none; color: inherit; transition: border-color .2s, transform .2s; }
+    .card:hover { border-color: var(--accent); transform: translateY(-2px); }
+    .poster { flex: 0 0 96px; height: 144px; border-radius: 8px; background: #2a221b center/cover no-repeat; }
+    .card h3 { font-size: 1.05rem; line-height: 1.25; }
+    .meta { color: var(--muted); font-size: .85rem; margin: 4px 0 8px; }
+    .reason { font-size: .92rem; line-height: 1.45; }
+    .streams { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .streams span { font-size: .72rem; border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; color: var(--muted); }
+
+    footer { max-width: 760px; margin: 48px auto 0; text-align: center; color: var(--muted); font-size: .75rem; line-height: 1.6; opacity: .8; }
+    footer a { color: inherit; }
+
+    @media (max-width: 560px) {
+      header { padding-top: 36px; }
+      form { padding: 18px; }
+      .row { grid-template-columns: 1fr; }
+      .results { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>TELE<span>RAMA</span></h1>
+    <p class="tagline">Tell us the vibe, the music, the room you're in, an era or a plot.<br />We'll pick what to watch.</p>
+  </header>
+
+  <form id="form">
+    <div>
+      <label for="vibe">Vibe</label>
+      <textarea id="vibe" maxlength="600" placeholder="Rainy Sunday, a bit melancholy but hopeful, want something slow and beautiful"></textarea>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="music">Music you're into</label>
+        <input id="music" type="text" maxlength="600" placeholder="Bon Iver, Khruangbin, 'Dreams' by Fleetwood Mac" />
+      </div>
+      <div>
+        <label for="plot">Plot idea</label>
+        <input id="plot" type="text" maxlength="600" placeholder="A heist where the crew turns on each other" />
+      </div>
+    </div>
+
+    <div>
+      <label>Era</label>
+      <div class="chips" id="eras"></div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Your setting (photo)</label>
+        <div class="photo">
+          <label class="photo-btn" for="photo" style="margin:0;text-transform:none;letter-spacing:0;">＋ Add a photo of your room or a place</label>
+          <input id="photo" type="file" accept="image/*" />
+          <div class="preview" id="preview">
+            <img id="previewImg" alt="Selected setting" />
+            <button type="button" id="clearPhoto">Remove</button>
+          </div>
+        </div>
+      </div>
+      <div>
+        <label for="region">Streaming in</label>
+        <select id="region">
+          <option value="US">United States</option>
+          <option value="GB">United Kingdom</option>
+          <option value="CA">Canada</option>
+          <option value="AU">Australia</option>
+          <option value="FR">France</option>
+          <option value="DE">Germany</option>
+          <option value="GR">Greece</option>
+          <option value="ES">Spain</option>
+          <option value="IT">Italy</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="submit" id="submit" type="submit">Find my movie</button>
+  </form>
+
+  <p class="status" id="status" role="status"></p>
+  <p class="read" id="read"></p>
+  <section class="results" id="results"></section>
+
+  <footer>
+    This product uses the TMDB API but is not endorsed or certified by TMDB.
+    Movie data and posters from <a href="https://www.themoviedb.org" target="_blank" rel="noopener">The Movie Database</a>.
+  </footer>
+
+  <script>
+    // Where the backend lives. Set this to your deployed Cloudflare Worker URL.
+    // You can also override it for testing with ?api=https://... in the page URL.
+    const API_URL = new URLSearchParams(location.search).get('api')
+      || 'https://telerama-api.YOUR-SUBDOMAIN.workers.dev';
+
+    const ERAS = ['Any', '1950s', '1960s', '1970s', '1980s', '1990s', '2000s', '2010s', '2020s'];
+    let era = '';
+    let image = null;
+
+    const $ = (id) => document.getElementById(id);
+    const erasEl = $('eras');
+    ERAS.forEach((label) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip';
+      b.textContent = label;
+      b.setAttribute('aria-pressed', label === 'Any');
+      b.onclick = () => {
+        era = label === 'Any' ? '' : label;
+        erasEl.querySelectorAll('.chip').forEach((c) => c.setAttribute('aria-pressed', c === b));
+      };
+      erasEl.appendChild(b);
+    });
+
+    try { $('region').value = localStorage.getItem('telerama-region') || 'US'; } catch {}
+    $('region').onchange = () => { try { localStorage.setItem('telerama-region', $('region').value); } catch {} };
+
+    // Shrink photos in the browser so uploads stay small and cheap.
+    function resizeImage(file, max = 1024) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, max / Math.max(img.width, img.height));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          URL.revokeObjectURL(img.src);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          resolve({ dataUrl, media_type: 'image/jpeg', data: dataUrl.split(',')[1] });
+        };
+        img.onerror = () => reject(new Error('Could not read that image.'));
+        img.src = URL.createObjectURL(file);
+      });
+    }
+
+    $('photo').onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        image = await resizeImage(file);
+        $('previewImg').src = image.dataUrl;
+        $('preview').style.display = 'flex';
+      } catch (err) {
+        setStatus(err.message, true);
+      }
+    };
+    $('clearPhoto').onclick = () => {
+      image = null;
+      $('photo').value = '';
+      $('preview').style.display = 'none';
+    };
+
+    function setStatus(text, isError = false) {
+      $('status').textContent = text;
+      $('status').className = 'status' + (isError ? ' error' : '');
+    }
+
+    const LOADING = ['Reading the room…', 'Flipping through the archive…', 'Checking what\'s streaming…'];
+
+    $('form').onsubmit = async (e) => {
+      e.preventDefault();
+      const body = {
+        vibe: $('vibe').value,
+        music: $('music').value,
+        plot: $('plot').value,
+        era,
+        region: $('region').value,
+        image: image ? { media_type: image.media_type, data: image.data } : undefined,
+      };
+      if (!body.vibe.trim() && !body.music.trim() && !body.plot.trim() && !era && !image) {
+        setStatus('Give us something to go on: a vibe, music, a plot, an era or a photo.', true);
+        return;
+      }
+
+      $('submit').disabled = true;
+      $('results').innerHTML = '';
+      $('read').textContent = '';
+      let i = 0;
+      setStatus(LOADING[0]);
+      const ticker = setInterval(() => setStatus(LOADING[++i % LOADING.length]), 2500);
+
+      try {
+        const res = await fetch(API_URL.replace(/\/$/, '') + '/api/recommend', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+        render(data);
+      } catch (err) {
+        setStatus(err.message === 'Failed to fetch' ? 'Could not reach the server. Is the API URL set?' : err.message, true);
+      } finally {
+        clearInterval(ticker);
+        $('submit').disabled = false;
+      }
+    };
+
+    function render({ profile, results }) {
+      if (!results || !results.length) {
+        setStatus('Nothing matched that one. Try loosening the era or adding a vibe.', true);
+        return;
+      }
+      setStatus('');
+      $('read').textContent = profile?.summary ? `“${profile.summary}”` : '';
+      const frag = document.createDocumentFragment();
+      for (const m of results) {
+        const a = document.createElement('a');
+        a.className = 'card';
+        a.href = m.url;
+        a.target = '_blank';
+        a.rel = 'noopener';
+
+        const poster = document.createElement('div');
+        poster.className = 'poster';
+        if (m.poster) poster.style.backgroundImage = `url("${m.poster}")`;
+
+        const info = document.createElement('div');
+        const h3 = document.createElement('h3');
+        h3.textContent = m.title;
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = [m.year, m.rating ? `★ ${m.rating}` : null].filter(Boolean).join(' · ');
+        const reason = document.createElement('p');
+        reason.className = 'reason';
+        reason.textContent = m.reason;
+        info.append(h3, meta, reason);
+
+        if (m.streaming?.length) {
+          const s = document.createElement('div');
+          s.className = 'streams';
+          m.streaming.forEach((name) => {
+            const tag = document.createElement('span');
+            tag.textContent = name;
+            s.appendChild(tag);
+          });
+          info.appendChild(s);
+        }
+        a.append(poster, info);
+        frag.appendChild(a);
+      }
+      $('results').appendChild(frag);
+    }
+  </script>
+</body>
+</html>

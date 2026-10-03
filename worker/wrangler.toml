@@ -1,0 +1,12 @@
+name = "telerama-api"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Comma-separated list of sites allowed to call this API.
+ALLOWED_ORIGINS = "https://loudnoises1909-cloud.github.io,http://localhost:8000"
+
+# Secrets — set these with `npx wrangler secret put <NAME>`, never commit them:
+#   ANTHROPIC_API_KEY   from console.anthropic.com
+#   TMDB_TOKEN          TMDB "API Read Access Token" from themoviedb.org/settings/api
