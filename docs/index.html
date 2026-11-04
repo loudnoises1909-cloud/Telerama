@@ -91,8 +91,8 @@
 
     <div class="row">
       <div>
-        <label for="music">Music you're into</label>
-        <input id="music" type="text" maxlength="600" placeholder="Bon Iver, Khruangbin, 'Dreams' by Fleetwood Mac" />
+        <label for="music">What's playing tonight?</label>
+        <input id="music" type="text" maxlength="600" placeholder="Angelo Badalamenti, Khruangbin, a Chet Baker record" />
       </div>
       <div>
         <label for="plot">Plot idea</label>
@@ -101,7 +101,7 @@
     </div>
 
     <div>
-      <label>Era</label>
+      <label>Era <span style="text-transform:none;letter-spacing:0;opacity:.7">(pick any)</span></label>
       <div class="chips" id="eras"></div>
     </div>
 
@@ -152,7 +152,7 @@
       || 'https://telerama-api.dimitrikakaviatos.workers.dev';
 
     const ERAS = ['Any', '1950s', '1960s', '1970s', '1980s', '1990s', '2000s', '2010s', '2020s'];
-    let era = '';
+    const eras = new Set();
     let image = null;
 
     const $ = (id) => document.getElementById(id);
@@ -164,8 +164,11 @@
       b.textContent = label;
       b.setAttribute('aria-pressed', label === 'Any');
       b.onclick = () => {
-        era = label === 'Any' ? '' : label;
-        erasEl.querySelectorAll('.chip').forEach((c) => c.setAttribute('aria-pressed', c === b));
+        // "Any" clears the picks; decades toggle on and off.
+        if (label === 'Any') eras.clear();
+        else eras.has(label) ? eras.delete(label) : eras.add(label);
+        erasEl.querySelectorAll('.chip').forEach((c) =>
+          c.setAttribute('aria-pressed', c.textContent === 'Any' ? eras.size === 0 : eras.has(c.textContent)));
       };
       erasEl.appendChild(b);
     });
@@ -222,11 +225,11 @@
         vibe: $('vibe').value,
         music: $('music').value,
         plot: $('plot').value,
-        era,
+        eras: [...eras],
         region: $('region').value,
         image: image ? { media_type: image.media_type, data: image.data } : undefined,
       };
-      if (!body.vibe.trim() && !body.music.trim() && !body.plot.trim() && !era && !image) {
+      if (!body.vibe.trim() && !body.music.trim() && !body.plot.trim() && !eras.size && !image) {
         setStatus('Give us something to go on: a vibe, music, a plot, an era or a photo.', true);
         return;
       }

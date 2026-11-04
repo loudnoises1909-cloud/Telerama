@@ -33,7 +33,7 @@ interface RecommendRequest {
   vibe?: string;
   music?: string;
   plot?: string;
-  era?: string; // e.g. "1970s", or "" for any
+  eras?: string[]; // decades like "1970s"; empty or missing means any
   region?: string; // ISO country code for streaming providers
   image?: { media_type: "image/jpeg" | "image/png" | "image/webp"; data: string };
 }
@@ -54,7 +54,7 @@ const PROFILE_SYSTEM = `You are a film curator. A user describes what they want 
 Translate that into a search profile for a movie database.
 - Music: infer the emotional tone, energy, and aesthetic of the artist or song, and map that to film tone.
 - Photos: read the palette, decor, era cues, lighting, and atmosphere; treat it as the setting the user wants to feel.
-- Era: if the user names one, set year_from/year_to to cover it. Otherwise use null unless the input clearly implies a period.
+- Eras: if the user picked decades, draw reference titles from those decades (spread across them if there are several). year_from/year_to are only used when no decades are picked: then use null unless the input clearly implies a period.
 - Reference titles must be real films you are confident exist.`;
 
 async function buildProfile(client: Anthropic, req: RecommendRequest): Promise<Profile> {
@@ -62,7 +62,7 @@ async function buildProfile(client: Anthropic, req: RecommendRequest): Promise<P
   if (req.vibe) parts.push(`Vibe / mood: ${req.vibe}`);
   if (req.music) parts.push(`Music they're into: ${req.music}`);
   if (req.plot) parts.push(`Plot idea: ${req.plot}`);
-  if (req.era) parts.push(`Era: ${req.era}`);
+  if (req.eras?.length) parts.push(`Eras: ${req.eras.join(", ")}`);
   if (req.image) parts.push("Setting / decor: see the attached photo.");
 
   const content: Anthropic.ContentBlockParam[] = [];
@@ -117,7 +117,15 @@ async function soft<T>(p: Promise<T>, fallback: T): Promise<T> {
   }
 }
 
-async function gatherCandidates(env: Env, profile: Profile): Promise<TmdbMovie[]> {
+type YearRange = { from: number | null; to: number | null };
+
+// Picked decades are exact, so they come from the request rather than the model's guess.
+function yearRanges(req: RecommendRequest, profile: Profile): YearRange[] {
+  if (req.eras?.length) return req.eras.map((e) => ({ from: Number(e.slice(0, 4)), to: Number(e.slice(0, 4)) + 9 }));
+  return [{ from: profile.year_from, to: profile.year_to }];
+}
+
+async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[]): Promise<TmdbMovie[]> {
   type Page = { results: TmdbMovie[] };
   const empty: Page = { results: [] };
 
@@ -149,23 +157,31 @@ async function gatherCandidates(env: Env, profile: Profile): Promise<TmdbMovie[]
   };
   const genreIds = profile.genres.map((g) => GENRES[g]);
   if (genreIds.length) discoverParams.with_genres = genreIds.join("|"); // "|" = any of
-  if (profile.year_from) discoverParams["primary_release_date.gte"] = `${profile.year_from}-01-01`;
-  if (profile.year_to) discoverParams["primary_release_date.lte"] = `${profile.year_to}-12-31`;
 
-  const discovers = [soft(tmdb<Page>(env, "/discover/movie", discoverParams), empty)];
-  if (keywordIds.length) {
-    discovers.push(soft(tmdb<Page>(env, "/discover/movie", { ...discoverParams, with_keywords: keywordIds.join("|") }), empty));
-  }
+  // One discover query per decade so each picked era gets its own results; past four, one query spans them all.
+  const queryRanges =
+    ranges.length <= 4
+      ? ranges
+      : [{ from: Math.min(...ranges.map((r) => r.from ?? 0)), to: Math.max(...ranges.map((r) => r.to ?? 9999)) }];
+  const discover = (range: YearRange, extra: Record<string, string> = {}) => {
+    const params = { ...discoverParams, ...extra };
+    if (range.from) params["primary_release_date.gte"] = `${range.from}-01-01`;
+    if (range.to) params["primary_release_date.lte"] = `${range.to}-12-31`;
+    return soft(tmdb<Page>(env, "/discover/movie", params), empty);
+  };
+  // Keyword-matched queries first: they're the most specific signal.
+  const discovers = [
+    ...(keywordIds.length ? queryRanges.map((r) => discover(r, { with_keywords: keywordIds.join("|") })) : []),
+    ...queryRanges.map((r) => discover(r)),
+  ];
 
   const [refLists, discoverPages] = await Promise.all([fromReferences, Promise.all(discovers)]);
 
+  const inRange = (year: number) => !year || ranges.some((r) => (!r.from || year >= r.from) && (!r.to || year <= r.to));
   const seen = new Map<number, TmdbMovie>();
-  // Keyword-matched discover results first: they're the most specific signal.
-  for (const m of [...discoverPages.reverse().flatMap((p) => p.results), ...refLists.flat()]) {
+  for (const m of [...discoverPages.flatMap((p) => p.results), ...refLists.flat()]) {
     if (m.adult || !m.overview || seen.has(m.id)) continue;
-    const year = Number(m.release_date?.slice(0, 4));
-    if (profile.year_from && year && year < profile.year_from) continue;
-    if (profile.year_to && year && year > profile.year_to) continue;
+    if (!inRange(Number(m.release_date?.slice(0, 4)))) continue;
     seen.set(m.id, m);
   }
   return [...seen.values()].slice(0, MAX_CANDIDATES);
@@ -187,7 +203,7 @@ async function rankCandidates(client: Anthropic, req: RecommendRequest, profile:
     .map((m) => `[${m.id}] ${m.title} (${m.release_date?.slice(0, 4) || "?"}) — ${m.overview!.slice(0, 220)}`)
     .join("\n");
 
-  const ask = [req.vibe && `Vibe: ${req.vibe}`, req.music && `Music: ${req.music}`, req.plot && `Plot: ${req.plot}`, req.era && `Era: ${req.era}`, req.image && "They also shared a photo of a setting."]
+  const ask = [req.vibe && `Vibe: ${req.vibe}`, req.music && `Music: ${req.music}`, req.plot && `Plot: ${req.plot}`, req.eras?.length && `Eras: ${req.eras.join(", ")} (spread picks across them)`, req.image && "They also shared a photo of a setting."]
     .filter(Boolean)
     .join("\n");
 
@@ -234,12 +250,19 @@ function clean(s: unknown): string | undefined {
   return typeof s === "string" && s.trim() ? s.trim().slice(0, MAX_TEXT) : undefined;
 }
 
+function parseEras(body: any): string[] {
+  // Older pages send a single `era` string.
+  const raw: unknown[] = Array.isArray(body?.eras) ? body.eras : body?.era ? [body.era] : [];
+  const valid = raw.filter((e): e is string => typeof e === "string" && /^(19|20)\d0s$/.test(e));
+  return [...new Set(valid)].sort().slice(0, 10);
+}
+
 function parseRequest(body: any): RecommendRequest | string {
   const req: RecommendRequest = {
     vibe: clean(body?.vibe),
     music: clean(body?.music),
     plot: clean(body?.plot),
-    era: clean(body?.era)?.slice(0, 20),
+    eras: parseEras(body),
     region: /^[A-Z]{2}$/.test(body?.region ?? "") ? body.region : "US",
   };
   const img = body?.image;
@@ -248,7 +271,7 @@ function parseRequest(body: any): RecommendRequest | string {
     if (img.data.length > MAX_IMAGE_BYTES) return "Image is too large.";
     req.image = { media_type: img.media_type, data: img.data };
   }
-  if (!req.vibe && !req.music && !req.plot && !req.image && !req.era) return "Tell me something: a vibe, music, a plot, an era or a photo.";
+  if (!req.vibe && !req.music && !req.plot && !req.image && !req.eras?.length) return "Tell me something: a vibe, music, a plot, an era or a photo.";
   return req;
 }
 
@@ -277,7 +300,7 @@ export default {
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
     try {
       const profile = await buildProfile(client, req);
-      const candidates = await gatherCandidates(env, profile);
+      const candidates = await gatherCandidates(env, profile, yearRanges(req, profile));
       if (!candidates.length) return json({ profile, results: [] }, 200, cors);
 
       const picks = await rankCandidates(client, req, profile, candidates);
