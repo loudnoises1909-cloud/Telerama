@@ -99,15 +99,20 @@ async function tmdb<T>(env: Env, path: string, params: Record<string, string> = 
   const url = new URL(TMDB + path);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   const res = await fetch(url, { headers: { Authorization: `Bearer ${env.TMDB_TOKEN}`, Accept: "application/json" } });
+  if (res.status === 401) throw new TmdbAuthError();
   if (!res.ok) throw new Error(`TMDB ${path} failed: ${res.status}`);
   return res.json() as Promise<T>;
 }
 
-// One failed lookup (an obscure title, a missing keyword) shouldn't sink the whole request.
+class TmdbAuthError extends Error {}
+
+// One failed lookup (an obscure title, a missing keyword) shouldn't sink the whole request,
+// but a rejected token should, so it isn't mistaken for "no matches".
 async function soft<T>(p: Promise<T>, fallback: T): Promise<T> {
   try {
     return await p;
-  } catch {
+  } catch (err) {
+    if (err instanceof TmdbAuthError) throw err;
     return fallback;
   }
 }
@@ -117,13 +122,15 @@ async function gatherCandidates(env: Env, profile: Profile): Promise<TmdbMovie[]
   const empty: Page = { results: [] };
 
   // Reference titles → the film itself plus TMDB's "recommendations" for it.
-  const fromReferences = profile.reference_titles.slice(0, 5).map(async (title) => {
+  const fromReferences = Promise.all(profile.reference_titles.slice(0, 5).map(async (title) => {
     const search = await soft(tmdb<Page>(env, "/search/movie", { query: title, include_adult: "false" }), empty);
     const hit = search.results[0];
     if (!hit) return [];
     const recs = await soft(tmdb<Page>(env, `/movie/${hit.id}/recommendations`), empty);
     return [hit, ...recs.results.slice(0, 8)];
-  });
+  }));
+  // Runs alongside the keyword lookups below; if those throw first, don't leave this rejection unhandled.
+  fromReferences.catch(() => {});
 
   // Keywords → TMDB keyword IDs, then a discover query filtered by genre, keyword and era.
   const keywordIds = (
@@ -150,7 +157,7 @@ async function gatherCandidates(env: Env, profile: Profile): Promise<TmdbMovie[]
     discovers.push(soft(tmdb<Page>(env, "/discover/movie", { ...discoverParams, with_keywords: keywordIds.join("|") }), empty));
   }
 
-  const [refLists, discoverPages] = await Promise.all([Promise.all(fromReferences), Promise.all(discovers)]);
+  const [refLists, discoverPages] = await Promise.all([fromReferences, Promise.all(discovers)]);
 
   const seen = new Map<number, TmdbMovie>();
   // Keyword-matched discover results first: they're the most specific signal.
@@ -264,6 +271,9 @@ export default {
     const req = parseRequest(body);
     if (typeof req === "string") return json({ error: req }, 400, cors);
 
+    if (!env.ANTHROPIC_API_KEY) return json({ error: "Server is missing its ANTHROPIC_API_KEY secret." }, 500, cors);
+    if (!env.TMDB_TOKEN) return json({ error: "Server is missing its TMDB_TOKEN secret." }, 500, cors);
+
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
     try {
       const profile = await buildProfile(client, req);
@@ -288,9 +298,13 @@ export default {
     } catch (err) {
       console.error(err);
       if (err instanceof Anthropic.RateLimitError) return json({ error: "Busy right now, try again in a moment." }, 429, cors);
-      if (err instanceof Anthropic.AuthenticationError) return json({ error: "Server is misconfigured (AI key)." }, 500, cors);
-      if (err instanceof Anthropic.APIError) return json({ error: "The AI service had a problem. Try again." }, 502, cors);
-      return json({ error: "Something went wrong finding movies." }, 500, cors);
+      if (err instanceof Anthropic.AuthenticationError) return json({ error: "The Anthropic API key was rejected. Check ANTHROPIC_API_KEY." }, 500, cors);
+      if (err instanceof TmdbAuthError) return json({ error: "The TMDB token was rejected. Check TMDB_TOKEN." }, 500, cors);
+      if (err instanceof Anthropic.APIError) {
+        // e.g. "credit balance is too low" — worth showing as-is.
+        return json({ error: `The AI service had a problem (${err.status ?? "network"}): ${err.message.slice(0, 200)}` }, 502, cors);
+      }
+      return json({ error: `Something went wrong finding movies: ${err instanceof Error ? err.message.slice(0, 200) : "unknown error"}` }, 500, cors);
     }
   },
 };
