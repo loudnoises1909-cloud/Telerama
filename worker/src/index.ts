@@ -12,6 +12,7 @@ interface Env {
 const MODEL = "claude-haiku-4-5";
 const TMDB = "https://api.themoviedb.org/3";
 const POSTER_BASE = "https://image.tmdb.org/t/p/w342";
+const LOGO_BASE = "https://image.tmdb.org/t/p/w92";
 const MAX_TEXT = 600;
 const MAX_IMAGE_BYTES = 3_500_000; // base64 length; the frontend resizes before upload
 const MAX_CANDIDATES = 40;
@@ -27,6 +28,25 @@ const GENRES = {
 type GenreName = keyof typeof GENRES;
 const GENRE_NAMES = Object.keys(GENRES) as [GenreName, ...GenreName[]];
 
+// Film languages users can switch off. TMDB list results report a film's original
+// language but not its country, so origin is filtered by language.
+const LANGUAGE_GROUPS: Record<string, { label: string; codes: string[] }> = {
+  english: { label: "English-language", codes: ["en"] },
+  french: { label: "French", codes: ["fr"] },
+  iberian: { label: "Spanish & Portuguese", codes: ["es", "pt"] },
+  italian: { label: "Italian", codes: ["it"] },
+  european: { label: "other European", codes: ["de", "nl", "sv", "da", "no", "nb", "fi", "is", "pl", "cs", "sk", "hu", "ro", "el", "ru", "uk", "sr", "hr", "bg"] },
+  east_asian: { label: "East Asian", codes: ["ja", "ko", "zh", "cn"] },
+  south_asian: { label: "South Asian (Indian, Pakistani…)", codes: ["hi", "ta", "te", "ml", "kn", "bn", "mr", "pa", "ur", "gu"] },
+};
+const OTHER_GROUP = "other"; // any language not listed above
+const KNOWN_CODES = new Set(Object.values(LANGUAGE_GROUPS).flatMap((g) => g.codes));
+
+function languageGroup(code: string | undefined): string {
+  for (const [key, g] of Object.entries(LANGUAGE_GROUPS)) if (code && g.codes.includes(code)) return key;
+  return OTHER_GROUP;
+}
+
 // ---------- Request shape ----------
 
 interface RecommendRequest {
@@ -35,6 +55,7 @@ interface RecommendRequest {
   plot?: string;
   eras?: string[]; // decades like "1970s"; empty or missing means any
   region?: string; // ISO country code for streaming providers
+  excludeLanguages?: string[]; // keys of LANGUAGE_GROUPS, or "other"
   image?: { media_type: "image/jpeg" | "image/png" | "image/webp"; data: string };
 }
 
@@ -64,6 +85,7 @@ async function buildProfile(client: Anthropic, req: RecommendRequest): Promise<P
   if (req.plot) parts.push(`Plot idea: ${req.plot}`);
   if (req.eras?.length) parts.push(`Eras: ${req.eras.join(", ")}`);
   if (req.image) parts.push("Setting / decor: see the attached photo.");
+  if (req.excludeLanguages?.length) parts.push(`Avoid films in these languages: ${describeExcluded(req.excludeLanguages)}`);
 
   const content: Anthropic.ContentBlockParam[] = [];
   if (req.image) {
@@ -91,6 +113,7 @@ interface TmdbMovie {
   overview?: string;
   poster_path?: string | null;
   vote_average?: number;
+  original_language?: string;
   vote_count?: number;
   adult?: boolean;
 }
@@ -125,7 +148,11 @@ function yearRanges(req: RecommendRequest, profile: Profile): YearRange[] {
   return [{ from: profile.year_from, to: profile.year_to }];
 }
 
-async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[]): Promise<TmdbMovie[]> {
+function describeExcluded(keys: string[]): string {
+  return keys.map((k) => (k === OTHER_GROUP ? "languages outside English, European, East Asian and South Asian" : LANGUAGE_GROUPS[k].label)).join("; ");
+}
+
+async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[], excluded: Set<string>): Promise<TmdbMovie[]> {
   type Page = { results: TmdbMovie[] };
   const empty: Page = { results: [] };
 
@@ -182,6 +209,7 @@ async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[])
   for (const m of [...discoverPages.flatMap((p) => p.results), ...refLists.flat()]) {
     if (m.adult || !m.overview || seen.has(m.id)) continue;
     if (!inRange(Number(m.release_date?.slice(0, 4)))) continue;
+    if (excluded.has(languageGroup(m.original_language))) continue;
     seen.set(m.id, m);
   }
   return [...seen.values()].slice(0, MAX_CANDIDATES);
@@ -226,10 +254,19 @@ async function rankCandidates(client: Anthropic, req: RecommendRequest, profile:
   return response.parsed_output.picks.filter((p) => byId.has(p.id)).slice(0, MAX_PICKS).map((p) => ({ movie: byId.get(p.id)!, reason: p.reason }));
 }
 
-async function watchProviders(env: Env, id: number, region: string): Promise<string[]> {
-  type Providers = { results: Record<string, { flatrate?: { provider_name: string }[] }> };
+// Subscription, free and ad-supported services. `link` is TMDB's "where to watch" page for the
+// film in that country (powered by JustWatch), which links out to each service.
+async function watchProviders(env: Env, id: number, region: string) {
+  type Provider = { provider_id: number; provider_name: string; logo_path?: string };
+  type Providers = { results: Record<string, { link?: string; flatrate?: Provider[]; free?: Provider[]; ads?: Provider[] }> };
   const r = await soft(tmdb<Providers>(env, `/movie/${id}/watch/providers`), { results: {} });
-  return (r.results[region]?.flatrate ?? []).map((p) => p.provider_name).slice(0, 4);
+  const here = r.results[region];
+  const seen = new Set<number>();
+  const services = [...(here?.flatrate ?? []), ...(here?.free ?? []), ...(here?.ads ?? [])]
+    .filter((p) => !seen.has(p.provider_id) && seen.add(p.provider_id))
+    .slice(0, 5)
+    .map((p) => ({ name: p.provider_name, logo: p.logo_path ? LOGO_BASE + p.logo_path : null }));
+  return { services, link: here?.link ?? null };
 }
 
 // ---------- HTTP plumbing ----------
@@ -263,6 +300,9 @@ function parseRequest(body: any): RecommendRequest | string {
     music: clean(body?.music),
     plot: clean(body?.plot),
     eras: parseEras(body),
+    excludeLanguages: Array.isArray(body?.excludeLanguages)
+      ? [...new Set(body.excludeLanguages.filter((k: unknown) => typeof k === "string" && (k in LANGUAGE_GROUPS || k === OTHER_GROUP)))] as string[]
+      : [],
     region: /^[A-Z]{2}$/.test(body?.region ?? "") ? body.region : "US",
   };
   const img = body?.image;
@@ -300,22 +340,26 @@ export default {
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
     try {
       const profile = await buildProfile(client, req);
-      const candidates = await gatherCandidates(env, profile, yearRanges(req, profile));
+      const candidates = await gatherCandidates(env, profile, yearRanges(req, profile), new Set(req.excludeLanguages));
       if (!candidates.length) return json({ profile, results: [] }, 200, cors);
 
       const picks = await rankCandidates(client, req, profile, candidates);
       const results = await Promise.all(
-        picks.map(async ({ movie, reason }) => ({
-          id: movie.id,
-          title: movie.title,
-          year: movie.release_date?.slice(0, 4) ?? null,
-          rating: movie.vote_average ? Math.round(movie.vote_average * 10) / 10 : null,
-          overview: movie.overview,
-          poster: movie.poster_path ? POSTER_BASE + movie.poster_path : null,
-          url: `https://www.themoviedb.org/movie/${movie.id}`,
-          reason,
-          streaming: await watchProviders(env, movie.id, req.region!),
-        })),
+        picks.map(async ({ movie, reason }) => {
+          const watch = await watchProviders(env, movie.id, req.region!);
+          return {
+            id: movie.id,
+            title: movie.title,
+            year: movie.release_date?.slice(0, 4) ?? null,
+            rating: movie.vote_average ? Math.round(movie.vote_average * 10) / 10 : null,
+            overview: movie.overview,
+            poster: movie.poster_path ? POSTER_BASE + movie.poster_path : null,
+            url: `https://www.themoviedb.org/movie/${movie.id}`,
+            reason,
+            streaming: watch.services,
+            watchUrl: watch.link,
+          };
+        }),
       );
       return json({ profile, results }, 200, cors);
     } catch (err) {
