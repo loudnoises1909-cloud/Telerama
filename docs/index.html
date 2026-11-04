@@ -84,9 +84,6 @@
     .chip:hover { border-color: var(--gold-soft); }
     .chip:focus-visible, .submit:focus-visible, .photo-btn:focus-within { outline: 2px solid var(--gold); outline-offset: 2px; }
     .chip[aria-pressed=true] { background: var(--gold); border-color: var(--gold); color: #120f0a; }
-    /* Language chips start on; switching one off strikes it through. */
-    .chip.lang[aria-pressed=true] { background: rgba(217, 196, 155, 0.12); color: var(--text); border-color: var(--line-strong); }
-    .chip.lang[aria-pressed=false] { color: var(--faint); text-decoration: line-through; border-style: dashed; }
 
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 24px; align-items: end; }
     .photo { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -169,8 +166,8 @@
       <div class="starts">
         <div class="start">
           <label class="label" for="vibe">Vibe</label>
-          <span class="hint">A mood, a feeling, a setting</span>
-          <textarea id="vibe" maxlength="600" placeholder="Rainy Sunday, pine trees, a slow chill"></textarea>
+          <span class="hint">A mood, a setting, anything to avoid</span>
+          <textarea id="vibe" maxlength="600" placeholder="Rainy Sunday, pine trees, a slow chill. No horror."></textarea>
         </div>
         <div class="start">
           <label class="label" for="music">What's playing tonight?</label>
@@ -187,11 +184,6 @@
       <div class="group">
         <span class="label" id="erasLabel">Era <span class="aside">pick any</span></span>
         <div class="chips" id="eras" role="group" aria-labelledby="erasLabel"></div>
-      </div>
-
-      <div class="group">
-        <span class="label" id="langsLabel">Film language <span class="aside">tap to leave one out</span></span>
-        <div class="chips" id="langs" role="group" aria-labelledby="langsLabel"></div>
       </div>
 
       <div class="row">
@@ -325,25 +317,6 @@
       $('eras').appendChild(b);
     });
 
-    // ---------- Film languages: all on; switch off what you don't want ----------
-    const LANGS = [
-      ['english', 'English'], ['french', 'French'], ['iberian', 'Spanish & Portuguese'], ['italian', 'Italian'],
-      ['european', 'Other European'], ['east_asian', 'East Asian'], ['south_asian', 'South Asian'], ['other', 'Everything else'],
-    ];
-    const excluded = new Set(store.get('excluded-languages', []));
-    LANGS.forEach(([key, label]) => {
-      const b = document.createElement('button');
-      b.type = 'button'; b.className = 'chip lang'; b.textContent = label;
-      const sync = () => b.setAttribute('aria-pressed', !excluded.has(key));
-      b.onclick = () => {
-        if (excluded.has(key)) excluded.delete(key);
-        else if (excluded.size < LANGS.length - 1) excluded.add(key); // keep at least one on
-        sync(); store.set('excluded-languages', [...excluded]);
-      };
-      sync();
-      $('langs').appendChild(b);
-    });
-
     // ---------- Starting points: show which ones are filled ----------
     ['vibe', 'music', 'plot'].forEach((id) => {
       const el = $(id);
@@ -404,7 +377,6 @@
         music: $('music').value,
         plot: $('plot').value,
         eras: [...eras],
-        excludeLanguages: [...excluded],
         region: $('region').value,
         image: image ? { media_type: image.media_type, data: image.data } : undefined,
       };
@@ -446,7 +418,7 @@
 
     function render({ profile, results }) {
       if (!results || !results.length) {
-        setStatus('Nothing matched that one. Try another era, or switch a language back on.', true);
+        setStatus('Nothing matched that one. Try another era, or loosen the vibe.', true);
         return;
       }
       setStatus('');

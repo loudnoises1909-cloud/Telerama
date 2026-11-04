@@ -28,25 +28,6 @@ const GENRES = {
 type GenreName = keyof typeof GENRES;
 const GENRE_NAMES = Object.keys(GENRES) as [GenreName, ...GenreName[]];
 
-// Film languages users can switch off. TMDB list results report a film's original
-// language but not its country, so origin is filtered by language.
-const LANGUAGE_GROUPS: Record<string, { label: string; codes: string[] }> = {
-  english: { label: "English-language", codes: ["en"] },
-  french: { label: "French", codes: ["fr"] },
-  iberian: { label: "Spanish & Portuguese", codes: ["es", "pt"] },
-  italian: { label: "Italian", codes: ["it"] },
-  european: { label: "other European", codes: ["de", "nl", "sv", "da", "no", "nb", "fi", "is", "pl", "cs", "sk", "hu", "ro", "el", "ru", "uk", "sr", "hr", "bg"] },
-  east_asian: { label: "East Asian", codes: ["ja", "ko", "zh", "cn"] },
-  south_asian: { label: "South Asian (Indian, Pakistani…)", codes: ["hi", "ta", "te", "ml", "kn", "bn", "mr", "pa", "ur", "gu"] },
-};
-const OTHER_GROUP = "other"; // any language not listed above
-const KNOWN_CODES = new Set(Object.values(LANGUAGE_GROUPS).flatMap((g) => g.codes));
-
-function languageGroup(code: string | undefined): string {
-  for (const [key, g] of Object.entries(LANGUAGE_GROUPS)) if (code && g.codes.includes(code)) return key;
-  return OTHER_GROUP;
-}
-
 // ---------- Request shape ----------
 
 interface RecommendRequest {
@@ -55,7 +36,6 @@ interface RecommendRequest {
   plot?: string;
   eras?: string[]; // decades like "1970s"; empty or missing means any
   region?: string; // ISO country code for streaming providers
-  excludeLanguages?: string[]; // keys of LANGUAGE_GROUPS, or "other"
   image?: { media_type: "image/jpeg" | "image/png" | "image/webp"; data: string };
 }
 
@@ -85,7 +65,6 @@ async function buildProfile(client: Anthropic, req: RecommendRequest): Promise<P
   if (req.plot) parts.push(`Plot idea: ${req.plot}`);
   if (req.eras?.length) parts.push(`Eras: ${req.eras.join(", ")}`);
   if (req.image) parts.push("Setting / decor: see the attached photo.");
-  if (req.excludeLanguages?.length) parts.push(`Avoid films in these languages: ${describeExcluded(req.excludeLanguages)}`);
 
   const content: Anthropic.ContentBlockParam[] = [];
   if (req.image) {
@@ -148,11 +127,7 @@ function yearRanges(req: RecommendRequest, profile: Profile): YearRange[] {
   return [{ from: profile.year_from, to: profile.year_to }];
 }
 
-function describeExcluded(keys: string[]): string {
-  return keys.map((k) => (k === OTHER_GROUP ? "languages outside English, European, East Asian and South Asian" : LANGUAGE_GROUPS[k].label)).join("; ");
-}
-
-async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[], excluded: Set<string>): Promise<TmdbMovie[]> {
+async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[]): Promise<TmdbMovie[]> {
   type Page = { results: TmdbMovie[] };
   const empty: Page = { results: [] };
 
@@ -209,7 +184,6 @@ async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[],
   for (const m of [...discoverPages.flatMap((p) => p.results), ...refLists.flat()]) {
     if (m.adult || !m.overview || seen.has(m.id)) continue;
     if (!inRange(Number(m.release_date?.slice(0, 4)))) continue;
-    if (excluded.has(languageGroup(m.original_language))) continue;
     seen.set(m.id, m);
   }
   return [...seen.values()].slice(0, MAX_CANDIDATES);
@@ -228,7 +202,7 @@ const PicksSchema = z.object({
 
 async function rankCandidates(client: Anthropic, req: RecommendRequest, profile: Profile, candidates: TmdbMovie[]) {
   const list = candidates
-    .map((m) => `[${m.id}] ${m.title} (${m.release_date?.slice(0, 4) || "?"}) — ${m.overview!.slice(0, 220)}`)
+    .map((m) => `[${m.id}] ${m.title} (${m.release_date?.slice(0, 4) || "?"}, lang: ${m.original_language || "?"}) — ${m.overview!.slice(0, 220)}`)
     .join("\n");
 
   const ask = [req.vibe && `Vibe: ${req.vibe}`, req.music && `Music: ${req.music}`, req.plot && `Plot: ${req.plot}`, req.eras?.length && `Eras: ${req.eras.join(", ")} (spread picks across them)`, req.image && "They also shared a photo of a setting."]
@@ -238,7 +212,7 @@ async function rankCandidates(client: Anthropic, req: RecommendRequest, profile:
   const response = await client.messages.parse({
     model: MODEL,
     max_tokens: 1024,
-    system: `You are a film curator picking what someone should watch tonight. Choose only from the candidate list, by id. Prefer a varied set (not all the same director or decade unless asked). Write reasons that speak to the user's own words.`,
+    system: `You are a film curator picking what someone should watch tonight. Choose only from the candidate list, by id. Honour anything the user rules out, such as a country or language (each candidate's original language is given as an ISO code). Prefer a varied set (not all the same director or decade unless asked). Write reasons that speak to the user's own words.`,
     messages: [
       {
         role: "user",
@@ -300,9 +274,6 @@ function parseRequest(body: any): RecommendRequest | string {
     music: clean(body?.music),
     plot: clean(body?.plot),
     eras: parseEras(body),
-    excludeLanguages: Array.isArray(body?.excludeLanguages)
-      ? [...new Set(body.excludeLanguages.filter((k: unknown) => typeof k === "string" && (k in LANGUAGE_GROUPS || k === OTHER_GROUP)))] as string[]
-      : [],
     region: /^[A-Z]{2}$/.test(body?.region ?? "") ? body.region : "US",
   };
   const img = body?.image;
@@ -340,7 +311,7 @@ export default {
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
     try {
       const profile = await buildProfile(client, req);
-      const candidates = await gatherCandidates(env, profile, yearRanges(req, profile), new Set(req.excludeLanguages));
+      const candidates = await gatherCandidates(env, profile, yearRanges(req, profile));
       if (!candidates.length) return json({ profile, results: [] }, 200, cors);
 
       const picks = await rankCandidates(client, req, profile, candidates);
