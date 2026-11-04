@@ -2,6 +2,8 @@ name = "telerama-api"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 compatibility_flags = ["nodejs_compat"]
+# Keep variables added in the Cloudflare dashboard when a push redeploys the worker.
+keep_vars = true
 
 [vars]
 # Comma-separated list of sites allowed to call this API.
