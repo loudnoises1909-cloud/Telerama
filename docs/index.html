@@ -146,10 +146,10 @@
   </footer>
 
   <script>
-    // Where the backend lives. Set this to your deployed Cloudflare Worker URL.
+    // Where the backend lives. The deployed Cloudflare Worker (see worker/).
     // You can also override it for testing with ?api=https://... in the page URL.
     const API_URL = new URLSearchParams(location.search).get('api')
-      || 'https://telerama-api.YOUR-SUBDOMAIN.workers.dev';
+      || 'https://telerama-api.dimitrikakaviatos.workers.dev';
 
     const ERAS = ['Any', '1950s', '1960s', '1970s', '1980s', '1990s', '2000s', '2010s', '2020s'];
     let era = '';
