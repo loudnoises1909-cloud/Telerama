@@ -50,10 +50,16 @@ interface RecommendRequest {
   kinds: Kind[]; // films, series, or both
   exclude: Set<string>; // candidate keys already shown, when shuffling
   region?: string; // ISO country code for streaming providers
+  services: Set<string>; // service keys (see serviceKey); empty = any service
+  partner?: { vibe?: string; music?: string }; // the other person, in "two of us" mode
   image?: { media_type: "image/jpeg" | "image/png" | "image/webp"; data: string };
 }
 
 // ---------- Claude step 1: turn fuzzy input into a search profile ----------
+
+function partnerText(p: { vibe?: string; music?: string }): string {
+  return [p.vibe && `vibe: ${p.vibe}`, p.music && `music: ${p.music}`].filter(Boolean).join("; ");
+}
 
 const ProfileSchema = z.object({
   summary: z.string().describe("One evocative sentence describing the viewing mood the user is after."),
@@ -77,7 +83,8 @@ Translate that into a search profile for a movie and TV database.
 - Eras: if the user picked decades, draw reference titles from those decades (spread across them if there are several). year_from/year_to are only used when no decades are picked: then use null unless the input clearly implies a period.
 - Reference titles must be real films or series you are confident exist, and only of the kinds the user wants. Start with the titles a knowledgeable friend would name first (a show literally set where and how the user describes), then less obvious ones.
 - Requirements: every reference title must meet every item in must_match (e.g. actually be set in the place named).
-- Keywords: put the most specific first (a place, a profession, a setting), as each one is searched on its own.`;
+- Keywords: put the most specific first (a place, a profession, a setting), as each one is searched on its own.
+- Two people: if a second person is described, find the overlap both will enjoy (blend the moods, don't just pick one side). Hard requirements from either person still apply, and the summary should speak to both.`;
 
 async function buildProfile(client: Anthropic, req: RecommendRequest): Promise<Profile> {
   const parts: string[] = [];
@@ -86,6 +93,7 @@ async function buildProfile(client: Anthropic, req: RecommendRequest): Promise<P
   if (req.plot) parts.push(`Plot idea: ${req.plot}`);
   if (req.eras?.length) parts.push(`Eras: ${req.eras.join(", ")}`);
   if (req.image) parts.push("Setting / decor: see the attached photo.");
+  if (req.partner) parts.push(`A second person is watching too. They want: ${partnerText(req.partner)}`);
   parts.push(`They want: ${req.kinds.map((k) => (k === "movie" ? "films" : "series")).join(" and ")}`);
 
   const content: Anthropic.ContentBlockParam[] = [];
@@ -174,21 +182,27 @@ function yearRanges(req: RecommendRequest, profile: Profile): YearRange[] {
   return [{ from: profile.year_from, to: profile.year_to }];
 }
 
-// Cloudflare's free plan allows 50 outbound requests per search. Worst case below, with films and
-// series: 4 keyword lookups + 2 × (6 title searches + 3 "similar" lists + 3 keyword queries + 2 genre
-// queries) = 32, plus 2 Claude calls and 6 streaming lookups = 40.
-const MAX_REFS = 6;
-const MAX_REF_RECS = 3;
-const MAX_KEYWORD_QUERIES = 3;
+// Cloudflare's free plan allows 50 outbound requests per search, so the lookups are budgeted.
+// Any service, films and series, worst case: 4 keyword lookups + 2 × (6 title searches + 3 "similar"
+// lists + 3 keyword queries + 2 genre queries) + 2 Claude calls + 10 streaming lookups = 44.
+// "My services" also checks streaming for every ranked pick (20) and fetches the region's service
+// list (2), so it searches a little less: 3 + 2 × (4 + 2 + 2 + 2) + 2 + 2 + 20 = 47.
+type Budget = { keywords: number; refs: number; refRecs: number; keywordQueries: number };
+const FULL_BUDGET: Budget = { keywords: 4, refs: 6, refRecs: 3, keywordQueries: 3 };
+const FILTERED_BUDGET: Budget = { keywords: 3, refs: 4, refRecs: 2, keywordQueries: 2 };
 
-async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[], kinds: Kind[]): Promise<Candidate[]> {
+// Discover filters that keep TMDB's broad queries to the user's services.
+type ServiceFilter = { ids: number[]; region: string } | null;
+
+async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[], kinds: Kind[], services: ServiceFilter): Promise<Candidate[]> {
+  const budget = services ? FILTERED_BUDGET : FULL_BUDGET;
   type Page = { results: TmdbItem[] };
   const empty: Page = { results: [] };
 
   // Keyword IDs are shared between films and series, so look them up once.
   const keywordIds = (
     await Promise.all(
-      profile.keywords.slice(0, 4).map(async (k) => {
+      profile.keywords.slice(0, budget.keywords).map(async (k) => {
         const r = await soft(tmdb<{ results: { id: number }[] }>(env, "/search/keyword", { query: k }), { results: [] });
         return r.results[0]?.id;
       }),
@@ -208,19 +222,24 @@ async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[],
     const dateField = kind === "movie" ? "primary_release_date" : "first_air_date";
     const discover = (range: YearRange, params: Record<string, string>) => {
       const p: Record<string, string> = { include_adult: "false", ...params };
+      if (services) {
+        p.with_watch_providers = services.ids.join("|");
+        p.watch_region = services.region;
+        p.with_watch_monetization_types = "flatrate|free|ads";
+      }
       if (range.from) p[`${dateField}.gte`] = `${range.from}-01-01`;
       if (range.to) p[`${dateField}.lte`] = `${range.to}-12-31`;
       return soft(tmdb<Page>(env, `/discover/${kind}`, p), empty).then((r) => r.results);
     };
 
     // 1. Claude's own suggestions, looked up by name: the most on-point source, so they always make the cut.
-    const refs = profile.reference_titles.filter((r) => r.kind === kind).slice(0, MAX_REFS);
+    const refs = profile.reference_titles.filter((r) => r.kind === kind).slice(0, budget.refs);
     const refHits = Promise.all(
       refs.map(({ title }) => soft(tmdb<Page>(env, `/search/${kind}`, { query: title, include_adult: "false" }), empty).then((r) => r.results[0])),
     );
     // 2. TMDB's "similar" lists for the first few of them.
     const refRecs = refHits.then((hits) =>
-      Promise.all(hits.filter(Boolean).slice(0, MAX_REF_RECS).map((h) =>
+      Promise.all(hits.filter(Boolean).slice(0, budget.refRecs).map((h) =>
         soft(tmdb<Page>(env, `/${kind}/${h!.id}/recommendations`), empty).then((r) => r.results.slice(0, 10)))),
     );
     // Runs alongside the discover queries below; if those throw first, don't leave this rejection unhandled.
@@ -228,7 +247,7 @@ async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[],
 
     // 3. Each keyword on its own, best-known titles first ("florida" alone, not "florida" OR "murder").
     const keywordLists = Promise.all(
-      keywordIds.slice(0, MAX_KEYWORD_QUERIES).map((id) =>
+      keywordIds.slice(0, budget.keywordQueries).map((id) =>
         discover(span, { with_keywords: String(id), sort_by: "vote_count.desc" }).then((r) => r.slice(0, 12))),
     );
 
@@ -278,7 +297,8 @@ async function rankCandidates(client: Anthropic, req: RecommendRequest, profile:
     .map((c) => `[${c.key}] ${c.title} (${KIND_LABEL[c.kind]}, ${c.year ?? "?"}, lang: ${c.language ?? "?"}) — ${c.overview.slice(0, 220)}`)
     .join("\n");
 
-  const ask = [req.vibe && `Vibe: ${req.vibe}`, req.music && `Music: ${req.music}`, req.plot && `Plot: ${req.plot}`, req.eras?.length && `Eras: ${req.eras.join(", ")} (spread picks across them)`, req.image && "They also shared a photo of a setting."]
+  const ask = [req.vibe && `Vibe: ${req.vibe}`, req.music && `Music: ${req.music}`, req.plot && `Plot: ${req.plot}`, req.eras?.length && `Eras: ${req.eras.join(", ")} (spread picks across them)`, req.image && "They also shared a photo of a setting.",
+    req.partner && `Watching with a second person, who wants: ${partnerText(req.partner)}. Pick titles both will enjoy, and say why it works for both of them.`]
     .filter(Boolean)
     .join("\n");
 
@@ -306,6 +326,44 @@ Requirements are firm. Use your own knowledge of each title, not just the short 
     .slice(0, MAX_PICKS);
 }
 
+// TMDB lists several entries for one service ("Netflix", "Netflix Standard with Ads", "Paramount+
+// Amazon Channel"). Users pick the service once, so entries are grouped by their base name.
+const SERVICE_SUFFIX = / (Amazon Channel|Apple TV Channel|Roku Premium Channel|Standard with Ads|Basic with Ads|with Ads|Premium Plus|Premium|Essential|Ad-Free)$/i;
+function baseService(name: string): string {
+  let n = name.trim();
+  for (let prev = ""; prev !== n; ) { prev = n; n = n.replace(SERVICE_SUFFIX, "").trim(); }
+  return n.replace(/ Plus$/i, "+"); // the brands' own spelling: "Paramount+", "Disney+"
+}
+// Matching key: TMDB spells some services both ways ("Paramount+" and "Paramount Plus").
+function serviceKey(name: string): string {
+  return baseService(name).toLowerCase().replace(/\+/g, " plus").replace(/\s+/g, " ").trim();
+}
+
+type ProviderEntry = { provider_id: number; provider_name: string; logo_path?: string; display_priority?: number; display_priorities?: Record<string, number> };
+
+// Every service available in a region, films and series combined, most popular first.
+async function regionProviders(env: Env, region: string) {
+  const lists = await Promise.all((["movie", "tv"] as const).map((k) =>
+    soft(tmdb<{ results: ProviderEntry[] }>(env, `/watch/providers/${k}`, { watch_region: region }), { results: [] })));
+  const byBase = new Map<string, { key: string; name: string; logo: string | null; ids: Set<number>; priority: number }>();
+  const entries = lists.flatMap((l) => l.results)
+    .map((p) => ({ ...p, priority: p.display_priorities?.[region] ?? p.display_priority ?? 999 }))
+    .sort((a, b) => a.priority - b.priority);
+  for (const p of entries) {
+    const key = serviceKey(p.provider_name);
+    const name = baseService(p.provider_name);
+    const priority = p.priority;
+    // The most popular spelling names the group.
+    const entry = byBase.get(key) ?? { key, name, logo: null, ids: new Set<number>(), priority };
+    entry.ids.add(p.provider_id);
+    entry.priority = Math.min(entry.priority, priority);
+    // Prefer the plain entry's logo ("Netflix", not "Netflix Standard with Ads").
+    if (p.logo_path && (!entry.logo || p.provider_name === name)) entry.logo = LOGO_BASE + p.logo_path;
+    byBase.set(key, entry);
+  }
+  return [...byBase.values()].sort((a, b) => a.priority - b.priority);
+}
+
 // Subscription, free and ad-supported services. `link` is TMDB's "where to watch" page for the
 // film in that country (powered by JustWatch), which links out to each service.
 async function watchProviders(env: Env, kind: Kind, id: number, region: string) {
@@ -316,12 +374,20 @@ async function watchProviders(env: Env, kind: Kind, id: number, region: string) 
   const seen = new Set<number>();
   const services = [...(here?.flatrate ?? []), ...(here?.free ?? []), ...(here?.ads ?? [])]
     .filter((p) => !seen.has(p.provider_id) && seen.add(p.provider_id))
-    .slice(0, 5)
-    .map((p) => ({ name: p.provider_name, logo: p.logo_path ? LOGO_BASE + p.logo_path : null }));
+    .map((p) => ({ name: baseService(p.provider_name), base: serviceKey(p.provider_name), logo: p.logo_path ? LOGO_BASE + p.logo_path : null }));
   return { services, link: here?.link ?? null };
 }
 
-function toResult(item: Candidate, reason: string, watch?: Awaited<ReturnType<typeof watchProviders>>) {
+type Watch = Awaited<ReturnType<typeof watchProviders>>;
+
+// The user's own services first, then the rest; five at most on a card.
+function cardServices(watch: Watch, mine: Set<string>) {
+  const ordered = [...watch.services.filter((s) => mine.has(s.base)), ...watch.services.filter((s) => !mine.has(s.base))];
+  const seen = new Set<string>();
+  return ordered.filter((s) => !seen.has(s.base) && seen.add(s.base)).slice(0, 5).map(({ name, logo }) => ({ name, logo }));
+}
+
+function toResult(item: Candidate, reason: string, watch?: Watch, mine: Set<string> = new Set()) {
   return {
     key: item.key,
     id: item.id,
@@ -334,9 +400,23 @@ function toResult(item: Candidate, reason: string, watch?: Awaited<ReturnType<ty
     url: `https://www.themoviedb.org/${item.kind}/${item.id}`,
     reason,
     // null = not looked up yet; the page asks /api/watch when it shows the card.
-    streaming: watch ? watch.services : null,
+    streaming: watch ? cardServices(watch, mine) : null,
     watchUrl: watch ? watch.link : null,
   };
+}
+
+// ---------- Share card posters ----------
+
+// The share card draws the poster onto a canvas, which browsers only allow for images served with
+// CORS headers. Only TMDB poster paths are accepted, so this can't be used as an open proxy.
+async function posterProxy(route: string, cors: Record<string, string>): Promise<Response> {
+  const m = route.match(/^\/api\/poster\/(w342|w500|w780)\/([A-Za-z0-9_-]{8,64}\.(?:jpg|png))$/);
+  if (!m) return json({ error: "Not found" }, 404, cors);
+  const res = await fetch(`https://image.tmdb.org/t/p/${m[1]}/${m[2]}`, { cf: { cacheTtl: 604800, cacheEverything: true } });
+  if (!res.ok) return json({ error: "Poster not found" }, 404, cors);
+  return new Response(res.body, {
+    headers: { ...cors, "Content-Type": res.headers.get("Content-Type") ?? "image/jpeg", "Cache-Control": "public, max-age=604800" },
+  });
 }
 
 // ---------- HTTP plumbing ----------
@@ -345,7 +425,7 @@ function corsHeaders(request: Request, env: Env): Record<string, string> {
   const origin = request.headers.get("Origin") ?? "";
   const allowed = env.ALLOWED_ORIGINS.split(",").map((s) => s.trim());
   return allowed.includes(origin)
-    ? { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type", Vary: "Origin" }
+    ? { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type", Vary: "Origin" }
     : {};
 }
 
@@ -385,7 +465,7 @@ async function handleWatch(env: Env, body: any) {
   const entries = await Promise.all(
     items.map(async (i) => {
       const w = await watchProviders(env, i.kind, i.id, region);
-      return [`${i.kind}-${i.id}`, { streaming: w.services, watchUrl: w.link }] as const;
+      return [`${i.kind}-${i.id}`, { streaming: cardServices(w, new Set()), watchUrl: w.link }] as const;
     }),
   );
   return { watch: Object.fromEntries(entries) };
@@ -399,6 +479,16 @@ function parseRequest(body: any): RecommendRequest | string {
     eras: parseEras(body),
     kinds: parseKinds(body),
     region: parseRegion(body),
+    services: new Set(
+      (Array.isArray(body?.services) ? body.services : [])
+        .filter((n: unknown): n is string => typeof n === "string" && n.trim().length > 0 && n.length <= 60)
+        .map((n: string) => serviceKey(n))
+        .slice(0, 30),
+    ),
+    partner: (() => {
+      const p = { vibe: clean(body?.partner?.vibe), music: clean(body?.partner?.music) };
+      return p.vibe || p.music ? p : undefined;
+    })(),
     exclude: new Set(
       (Array.isArray(body?.exclude) ? body.exclude : [])
         .filter((k: unknown): k is string => typeof k === "string" && /^(movie|tv)-\d+$/.test(k))
@@ -422,7 +512,12 @@ export default {
 
     const url = new URL(request.url);
     const route = url.pathname;
-    if (request.method !== "POST" || (route !== "/api/recommend" && route !== "/api/watch")) return json({ error: "Not found" }, 404, cors);
+    if (request.method === "GET" && route.startsWith("/api/poster/")) {
+      // The share card loads posters with crossorigin, so the browser sends the page's Origin.
+      if (!cors["Access-Control-Allow-Origin"]) return json({ error: "Origin not allowed" }, 403, cors);
+      return posterProxy(route, cors);
+    }
+    if (request.method !== "POST" || !["/api/recommend", "/api/watch", "/api/providers"].includes(route)) return json({ error: "Not found" }, 404, cors);
     // Only the allowed sites may spend your API credits.
     if (!cors["Access-Control-Allow-Origin"]) return json({ error: "Origin not allowed" }, 403, cors);
 
@@ -433,6 +528,15 @@ export default {
       return json({ error: "Invalid JSON" }, 400, cors);
     }
     if (!env.TMDB_TOKEN) return json({ error: "Server is missing its TMDB_TOKEN secret." }, 500, cors);
+    if (route === "/api/providers") {
+      try {
+        const list = await regionProviders(env, parseRegion(body));
+        return json({ providers: list.slice(0, 30).map(({ name, logo }) => ({ name, logo })) }, 200, cors);
+      } catch (err) {
+        if (err instanceof TmdbAuthError) return json({ error: "The TMDB token was rejected. Check TMDB_TOKEN." }, 500, cors);
+        throw err;
+      }
+    }
     if (route === "/api/watch") {
       try {
         return json(await handleWatch(env, body), 200, cors);
@@ -450,11 +554,26 @@ export default {
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
     try {
       const profile = await buildProfile(client, req);
-      const candidates = (await gatherCandidates(env, profile, yearRanges(req, profile), req.kinds))
+      // "My services": map the picked names to TMDB's provider ids for this region.
+      let filter: ServiceFilter = null;
+      if (req.services.size) {
+        const ids = (await regionProviders(env, req.region!)).filter((p) => req.services.has(p.key)).flatMap((p) => [...p.ids]);
+        if (ids.length) filter = { ids, region: req.region! };
+      }
+
+      const candidates = (await gatherCandidates(env, profile, yearRanges(req, profile), req.kinds, filter))
         .filter((c) => !req.exclude.has(c.key)); // already shown before a shuffle
       if (!candidates.length) return json({ profile, results: [], reserve: [] }, 200, cors);
 
       const picks = await rankCandidates(client, req, profile, candidates);
+      if (filter) {
+        // Title searches and "similar" lists aren't filtered by service, so check every pick and keep
+        // only what's on the user's services. The reserve comes back with streaming info filled in.
+        const checked = await Promise.all(picks.map(async (p) => ({ ...p, watch: await watchProviders(env, p.item.kind, p.item.id, req.region!) })));
+        const available = checked.filter((p) => p.watch.services.some((s) => req.services.has(s.base)));
+        const all = available.map(({ item, reason, watch }) => toResult(item, reason, watch, req.services));
+        return json({ profile, results: all.slice(0, SHOWN_PICKS), reserve: all.slice(SHOWN_PICKS) }, 200, cors);
+      }
       const results = await Promise.all(
         picks.slice(0, SHOWN_PICKS).map(async ({ item, reason }) => toResult(item, reason, await watchProviders(env, item.kind, item.id, req.region!))),
       );
