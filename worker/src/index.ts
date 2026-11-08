@@ -63,7 +63,8 @@ function partnerText(p: { vibe?: string; music?: string }): string {
 
 const ProfileSchema = z.object({
   summary: z.string().describe("One evocative sentence describing the viewing mood the user is after."),
-  folder_name: z.string().describe("A 2-4 word, title-case name for a folder of picks like these, evocative rather than literal, e.g. 'Florida Noir', 'Rainy Sunday Chills', 'Badalamenti Nights'."),
+  folder_name: z.string().describe("A 2-4 word, title-case name for a folder of picks like these, evocative rather than literal, e.g. 'Florida Noir', 'Rainy Sunday Chills', 'Lana Del Rey Summer'."),
+  music_feel: z.string().describe("If music was given: what it feels like, not facts about the artist. Mood, energy, themes and imagery, e.g. Eddie Vedder → 'raw, earnest, open roads, wilderness, solitude, searching for freedom'. Empty if no music."),
   must_match: z
     .array(z.string())
     .describe("Hard requirements the user stated or clearly implied, phrased as checkable facts: 'set in Florida', 'a heist plot', 'not an Indian film'. Moods and tones ('sunshine', 'cosy') are not requirements. Empty if there are none."),
@@ -79,7 +80,7 @@ type Profile = z.infer<typeof ProfileSchema>;
 
 const PROFILE_SYSTEM = `You are a film and TV curator. A user describes what they want to watch using any mix of: a mood or vibe, music they're into, a room or setting (sometimes as a photo), an era, or a plot idea.
 Translate that into a search profile for a movie and TV database.
-- Music: infer the emotional tone, energy, and aesthetic of the artist or song, and map that to film tone.
+- Music describes a feeling, not a filmography. First write music_feel (mood, energy, themes, imagery of the sound), then choose titles that feel like that. At most one reference title may be directly tied to the artist (a film they scored or soundtracked, appear in, or that is about them); the rest must be other films and series with the same feel. Example: Eddie Vedder → maybe Into the Wild, then Wild, Nomadland, The Way, not a list of his soundtracks.
 - Photos: read the palette, decor, era cues, lighting, and atmosphere; treat it as the setting the user wants to feel.
 - Eras: if the user picked decades, draw reference titles from those decades (spread across them if there are several). year_from/year_to are only used when no decades are picked: then use null unless the input clearly implies a period.
 - Reference titles must be real films or series you are confident exist, and only of the kinds the user wants. Start with the titles a knowledgeable friend would name first (a show literally set where and how the user describes), then less obvious ones.
@@ -306,12 +307,12 @@ async function rankCandidates(client: Anthropic, req: RecommendRequest, profile:
   const response = await client.messages.parse({
     model: MODEL,
     max_tokens: 4000,
-    system: `You are a film and TV curator picking what someone should watch tonight. Choose only from the candidate list, by id. When both films and series are wanted, mix them unless the user's words lean one way. Honour anything the user rules out, such as a country or language (each candidate's original language is given as an ISO code). Prefer a varied set (not all the same director or decade unless asked). Write reasons that speak to the user's own words.
+    system: `You are a film and TV curator picking what someone should watch tonight. Choose only from the candidate list, by id. When both films and series are wanted, mix them unless the user's words lean one way. Honour anything the user rules out, such as a country or language (each candidate's original language is given as an ISO code). Prefer a varied set (not all the same director or decade unless asked). Music describes a feeling: pick titles that feel like it, and include at most one title directly tied to the artist (one they made music for, appear in, or that is about them). Write reasons that speak to the user's own words.
 Requirements are firm. Use your own knowledge of each title, not just the short summary given: a show about murders that is set in Philadelphia does not fit "set in Florida". Leave out anything you are not confident meets every requirement. A shorter list of accurate picks is far better than a full list with a wrong one.`,
     messages: [
       {
         role: "user",
-        content: `What they asked for:\n${ask}\n\nYour read of it: ${profile.summary}\nRequirements: ${profile.must_match.length ? profile.must_match.join("; ") : "none"}\n\nCandidates:\n${list}\n\nRank up to ${Math.min(MAX_PICKS, candidates.length)} that meet the requirements, best first. The first ${SHOWN_PICKS} are shown together, so make them a strong, varied set on their own.`,
+        content: `What they asked for:\n${ask}\n\nYour read of it: ${profile.summary}${profile.music_feel ? `\nThe music feels like: ${profile.music_feel}` : ""}\nRequirements: ${profile.must_match.length ? profile.must_match.join("; ") : "none"}\n\nCandidates:\n${list}\n\nRank up to ${Math.min(MAX_PICKS, candidates.length)} that meet the requirements, best first. The first ${SHOWN_PICKS} are shown together, so make them a strong, varied set on their own.`,
       },
     ],
     output_config: { format: zodOutputFormat(PicksSchema) },
