@@ -504,8 +504,8 @@
     function shuffleTile() {
       const b = el('button', { type: 'button', className: 'shuffle-tile', id: 'shuffle' });
       b.innerHTML = SHUFFLE_ICON;
-      b.append(el('strong', { textContent: 'Not quite it?' }),
-        el('span', { textContent: reserve.length ? 'Pop it: 10 new picks, same mood' : 'Pop it: we\'ll search again, skipping these' }));
+      b.append(el('strong', { textContent: 'Reshuffle' }),
+        el('span', { textContent: reserve.length ? 'Not quite it? 10 new picks, same mood' : 'Not quite it? We\'ll search again, skipping these' }));
       b.onclick = onShuffle;
       return b;
     }
