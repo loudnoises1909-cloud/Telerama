@@ -111,6 +111,7 @@
       background: linear-gradient(180deg, #ecdcb6, #c7ae7c); box-shadow: 0 10px 40px rgba(217, 196, 155, 0.16); transition: transform 0.15s, opacity 0.2s;
     }
     .submit:hover { transform: translateY(-1px); }
+    .submit span { display: inline-block; } /* on narrow screens, wrap between the two sentences */
     .submit:disabled { opacity: 0.55; cursor: wait; transform: none; }
     /* While searching, the button says what it's doing and shimmers. */
     .submit.busy:disabled { opacity: 1; cursor: progress; background: linear-gradient(90deg, #c7ae7c 0%, #f3e6c6 50%, #c7ae7c 100%) 0 0 / 200% 100%; animation: shimmer 1.6s linear infinite; }
@@ -239,7 +240,7 @@
         <path d="M150 140 A62 62 0 0 1 132 156" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity=".25" />
       </svg>
       <h1>Shuffle Bubble</h1>
-      <p class="sub"><span>Find your flick.</span> <span>Get in your bubble.</span></p>
+      <p class="sub"><span>Turn a song, a vibe or a place</span> <span>into something to watch.</span></p>
     </header>
 
     <form id="form">
@@ -325,7 +326,7 @@
         <span class="svc-note" id="svcNote">None picked: we'll show picks from every service.</span>
       </div>
 
-      <button class="submit" id="submit" type="submit">Find my flick</button>
+      <button class="submit" id="submit" type="submit"><span>Find your flick.</span> <span>Get in your bubble.</span></button>
     </form>
 
     <p class="status" id="status" role="status"></p>
@@ -646,11 +647,13 @@
     }
 
     const BUSY_TEXT = 'Shufflin\' & Bubblin\'…';
+    const BUTTON_HTML = $('submit').innerHTML;
 
     function setBusy(busy, shuffling = false) {
       $('submit').disabled = busy;
       $('submit').classList.toggle('busy', busy && !shuffling);
-      $('submit').textContent = busy && !shuffling ? BUSY_TEXT : 'Find my flick';
+      if (busy && !shuffling) $('submit').textContent = BUSY_TEXT;
+      else $('submit').innerHTML = BUTTON_HTML;
       const b = $('shuffle');
       if (!b || b.classList.contains('done')) return;
       b.disabled = busy;
