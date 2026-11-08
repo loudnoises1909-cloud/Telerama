@@ -112,6 +112,10 @@
     }
     .submit:hover { transform: translateY(-1px); }
     .submit:disabled { opacity: 0.55; cursor: wait; transform: none; }
+    /* While searching, the button says what it's doing and shimmers. */
+    .submit.busy:disabled { opacity: 1; cursor: progress; background: linear-gradient(90deg, #c7ae7c 0%, #f3e6c6 50%, #c7ae7c 100%) 0 0 / 200% 100%; animation: shimmer 1.6s linear infinite; }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+    @media (prefers-reduced-motion: reduce) { .submit.busy:disabled { animation: none; } }
 
     /* ---------- Results ---------- */
     .status { max-width: 940px; margin: 26px auto 0; text-align: center; color: var(--muted); min-height: 1.4em; line-height: 1.5; }
@@ -440,7 +444,7 @@
       setBusy(true, shuffling);
       if (!shuffling) { $('read').textContent = ''; $('results').innerHTML = ''; }
       let i = 0;
-      setStatus(shuffling ? 'Blowing a new bubble…' : LOADING[0]);
+      setStatus(LOADING[0]);
       const ticker = setInterval(() => setStatus(LOADING[++i % LOADING.length]), 2500);
       try {
         const data = await api('/api/recommend', shuffling ? { ...body, exclude: shown } : body);
@@ -514,12 +518,16 @@
       b.append(el('strong', { textContent: 'That\'s every bubble for this one' }), el('span', { textContent: 'Try another vibe or decade.' }));
     }
 
+    const BUSY_TEXT = 'Shufflin\' & Bubblin\'…';
+
     function setBusy(busy, shuffling = false) {
       $('submit').disabled = busy;
+      $('submit').classList.toggle('busy', busy && !shuffling);
+      $('submit').textContent = busy && !shuffling ? BUSY_TEXT : 'Find my flick';
       const b = $('shuffle');
       if (!b || b.classList.contains('done')) return;
       b.disabled = busy;
-      if (busy && shuffling) b.querySelector('span').textContent = 'Blowing a new bubble…';
+      if (busy && shuffling) b.querySelector('span').textContent = BUSY_TEXT;
     }
 
     function show(items) {
