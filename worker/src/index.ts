@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { DAILY_PER_PERSON, DAILY_TOTAL, Limits } from "./limits";
@@ -14,10 +15,16 @@ interface Env {
   LIMITS: DurableObjectNamespace<Limits>; // daily caps
   DAILY_SEARCHES_PER_PERSON?: string;
   DAILY_SEARCHES_TOTAL?: string;
+  PROFILE_EFFORT?: string; // how hard Opus thinks: low (default), medium, high
 }
 
-// Haiku keeps each recommendation at roughly half a cent.
-const MODEL = "claude-haiku-4-5";
+// Opus reads the request and names titles, which is where knowing film and TV matters most;
+// Haiku ranks and explains the shortlist cheaply. Together roughly 3-4 cents a search.
+const PROFILE_MODEL = "claude-opus-5-5";
+const PICK_MODEL = "claude-haiku-5-5";
+type Effort = "low" | "medium" | "high";
+const effortSetting = (v: string | undefined, fallback: Effort): Effort =>
+  v === "low" || v === "medium" || v === "high" ? v : fallback;
 const TMDB = "https://api.themoviedb.org/3";
 const POSTER_BASE = "https://image.tmdb.org/t/p/w342";
 const LOGO_BASE = "https://image.tmdb.org/t/p/w92";
@@ -71,6 +78,13 @@ function partnerText(p: { vibe?: string; music?: string }): string {
 
 const ProfileSchema = z.object({
   summary: z.string().describe("One evocative sentence describing the viewing mood the user is after."),
+  vibe_picture: z.string().describe("Two or three sentences, shown to the user, that paint the vibe back to them in concrete, sensory detail, the way a film-loving friend who instantly gets it would: places, textures, characters, the kind of trouble. E.g. 'Palm trees, sweaty nights, pastel-coloured motels, shady millionaires, crooked cops and someone floating face-down in a swimming pool. Miami meets the Keys, with a little dark comedy and a lot of bad decisions.' No title names."),
+  directions: z
+    .array(z.object({
+      label: z.string().describe("2-5 words, e.g. '80s Miami neon & cocaine'"),
+      refine: z.string().describe("One short sentence to add to the request to go that way, e.g. 'Lean into 80s Miami: neon, cocaine money and nightclubs.'"),
+    }))
+    .describe("Exactly two distinct ways to narrow this request, different enough that each would change the picks."),
   folder_name: z.string().describe("A 2-4 word, title-case name for a folder of picks like these, evocative rather than literal, e.g. 'Florida Noir', 'Rainy Sunday Chills', 'Lana Del Rey Summer'."),
   music_feel: z.string().describe("If music was given: what it feels like, not facts about the artist. Mood, energy, themes and imagery, e.g. Eddie Vedder → 'raw, earnest, open roads, wilderness, solitude, searching for freedom'. Empty if no music."),
   must_match: z
@@ -82,7 +96,7 @@ const ProfileSchema = z.object({
   year_to: z.number().int().nullable().describe("Latest release year, or null for no limit."),
   reference_titles: z
     .array(z.object({ title: z.string(), kind: z.enum(["movie", "tv"]) }))
-    .describe("Up to 6 real titles per wanted kind that strongly match, each marked as a movie or a tv series. Lead with the most obvious, on-the-nose matches."),
+    .describe("Up to 16 real titles that strongly match, split across the kinds wanted, each marked as a movie or a tv series. Lead with the most obvious, on-the-nose matches; include recent releases and a range of tones where they fit."),
 });
 type Profile = z.infer<typeof ProfileSchema>;
 
@@ -91,12 +105,15 @@ Translate that into a search profile for a movie and TV database.
 - Music describes a feeling, not a filmography. First write music_feel (mood, energy, themes, imagery of the sound), then choose titles that feel like that. At most one reference title may be directly tied to the artist (a film they scored or soundtracked, appear in, or that is about them); the rest must be other films and series with the same feel. Example: Eddie Vedder → maybe Into the Wild, then Wild, Nomadland, The Way, not a list of his soundtracks.
 - Photos: read the palette, decor, era cues, lighting, and atmosphere; treat it as the setting the user wants to feel.
 - Eras: if the user picked decades, draw reference titles from those decades (spread across them if there are several). year_from/year_to are only used when no decades are picked: then use null unless the input clearly implies a period.
-- Reference titles must be real films or series you are confident exist, and only of the kinds the user wants. Start with the titles a knowledgeable friend would name first (a show literally set where and how the user describes), then less obvious ones.
+- Reference titles are the heart of the answer: name what a film-obsessed friend would, from your own knowledge. They must be real films or series you are confident exist, and only of the kinds the user wants. Start with the titles that fit most literally (a show set exactly where and how the user describes), then widen: recent releases as well as classics, and a range of tones (thriller, dark comedy, drama) unless the user narrowed it.
 - Requirements: every reference title must meet every item in must_match (e.g. actually be set in the place named).
 - Keywords: put the most specific first (a place, a profession, a setting), as each one is searched on its own.
 - Two people: if a second person is described, find the overlap both will enjoy (blend the moods, don't just pick one side). Hard requirements from either person still apply, and the summary should speak to both.`;
 
-async function buildProfile(client: Anthropic, req: RecommendRequest): Promise<Profile> {
+// Opus can decline a request outright (stop_reason "refusal"); say so plainly instead of erroring.
+class DeclinedError extends Error {}
+
+async function buildProfile(client: Anthropic, req: RecommendRequest, effort: Effort): Promise<Profile> {
   const parts: string[] = [];
   if (req.vibe) parts.push(`Vibe / mood: ${req.vibe}`);
   if (req.music) parts.push(`Music they're into: ${req.music}`);
@@ -112,13 +129,17 @@ async function buildProfile(client: Anthropic, req: RecommendRequest): Promise<P
   }
   content.push({ type: "text", text: parts.join("\n") });
 
-  const response = await client.messages.parse({
-    model: MODEL,
-    max_tokens: 1024,
+  const response = await client.beta.messages.parse({
+    model: PROFILE_MODEL,
+    max_tokens: 16000, // thinking counts toward this as well as the answer
     system: PROFILE_SYSTEM,
-    messages: [{ role: "user", content }],
-    output_config: { format: zodOutputFormat(ProfileSchema) },
+    messages: [{ role: "user", content: content as Anthropic.Beta.BetaContentBlockParam[] }],
+    output_config: { effort, format: betaZodOutputFormat(ProfileSchema) },
+    // If a safety check declines on Opus, the API retries on a suitable model within the same call.
+    betas: ["server-side-fallback-2026-07-01"],
+    fallbacks: "default",
   });
+  if (response.stop_reason === "refusal") throw new DeclinedError();
   if (!response.parsed_output) throw new Error(`Could not read the request (stop_reason: ${response.stop_reason})`);
   return response.parsed_output;
 }
@@ -149,6 +170,7 @@ interface Candidate {
   posterPath: string | null;
   rating: number | null;
   language: string | null;
+  suggested?: boolean; // named by Claude in the profile step, not found by a broad search
 }
 
 function toCandidate(kind: Kind, m: TmdbItem): Candidate | null {
@@ -193,19 +215,22 @@ function yearRanges(req: RecommendRequest, profile: Profile): YearRange[] {
 }
 
 // Cloudflare's free plan allows 50 outbound requests per search, so the lookups are budgeted.
-// Any service, films and series, worst case: 4 keyword lookups + 2 × (6 title searches + 3 "similar"
-// lists + 3 keyword queries + 2 genre queries) + 2 Claude calls + 10 streaming lookups = 44.
+// Claude's own titles lead, so most of the budget goes to looking those up by name.
+// Films and series, any service, worst case: 2 keyword lookups + 16 title searches + 2 × (2 "similar"
+// lists + 2 keyword queries + 2 genre queries) + 2 Claude calls + 10 streaming lookups = 42.
 // "My services" also checks streaming for every ranked pick (20) and fetches the region's service
-// list (2), so it searches a little less: 3 + 2 × (4 + 2 + 2 + 2) + 2 + 2 + 20 = 47.
-type Budget = { keywords: number; refs: number; refRecs: number; keywordQueries: number };
-const FULL_BUDGET: Budget = { keywords: 4, refs: 6, refRecs: 3, keywordQueries: 3 };
-const FILTERED_BUDGET: Budget = { keywords: 3, refs: 4, refRecs: 2, keywordQueries: 2 };
+// list (2): 1 + 12 + 2 × (1 + 1 + 1) + 2 + 2 + 20 = 43.
+type Budget = { keywords: number; refs: number; refRecs: number; keywordQueries: number; genreSpanOnly: boolean };
+function budgetFor(kinds: number, filtered: boolean): Budget {
+  if (filtered) return { keywords: 1, refs: kinds === 2 ? 6 : 12, refRecs: 1, keywordQueries: 1, genreSpanOnly: true };
+  return { keywords: 2, refs: kinds === 2 ? 8 : 14, refRecs: 2, keywordQueries: 2, genreSpanOnly: false };
+}
 
 // Discover filters that keep TMDB's broad queries to the user's services.
 type ServiceFilter = { ids: number[]; region: string } | null;
 
 async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[], kinds: Kind[], services: ServiceFilter): Promise<Candidate[]> {
-  const budget = services ? FILTERED_BUDGET : FULL_BUDGET;
+  const budget = budgetFor(kinds.length, !!services);
   type Page = { results: TmdbItem[] };
   const empty: Page = { results: [] };
 
@@ -226,7 +251,7 @@ async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[],
     to: ranges.some((r) => !r.to) ? null : Math.max(...ranges.map((r) => r.to!)),
   };
   // Genre queries are the broadest, so give each era its own when there are only a couple.
-  const genreRanges = ranges.length <= 2 ? ranges : [span];
+  const genreRanges = ranges.length <= 2 && !budget.genreSpanOnly ? ranges : [span];
 
   async function forKind(kind: Kind): Promise<Candidate[]> {
     const dateField = kind === "movie" ? "primary_release_date" : "first_air_date";
@@ -275,7 +300,11 @@ async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[],
       const c = item && toCandidate(kind, item);
       if (c && !seen.has(c.key) && inRange(c.year)) seen.set(c.key, c);
     };
-    hits.forEach(add);
+    for (const h of hits) {
+      add(h);
+      const c = h && seen.get(`${kind}-${h.id}`);
+      if (c) c.suggested = true;
+    }
     // Then take from the other lists in turn, so no single broad query crowds the rest out.
     const lists = [...byKeyword, ...recs, ...byGenre];
     for (let i = 0; i < Math.max(0, ...lists.map((l) => l.length)); i++) for (const l of lists) add(l[i]);
@@ -297,14 +326,15 @@ const PicksSchema = z.object({
       id: z.string().describe("The id in square brackets from the candidate list, e.g. movie-123."),
       check: z.string().describe("Before anything else: how this title meets each requirement, from what you know of it, e.g. 'Set in Miami, Florida'. Write 'none' if there are no requirements."),
       meets_requirements: z.boolean().describe("True only if you are confident it meets every requirement."),
-      reason: z.string().describe("One sentence, under 25 words, on why it fits this specific request."),
+      tag: z.string().describe("A short genre and tone tag, 2-4 words, e.g. 'Crime · Dark comedy' or 'Neo-noir · Erotic thriller'."),
+      reason: z.string().describe("One or two sentences, under 40 words, with specifics: the setting, the tone, what kind of trouble. If it fits through atmosphere more than plot, say so honestly, e.g. 'Not a murder mystery, but…'."),
     }),
   ),
 });
 
 async function rankCandidates(client: Anthropic, req: RecommendRequest, profile: Profile, candidates: Candidate[]) {
   const list = candidates
-    .map((c) => `[${c.key}] ${c.title} (${KIND_LABEL[c.kind]}, ${c.year ?? "?"}, lang: ${c.language ?? "?"}) — ${c.overview.slice(0, 220)}`)
+    .map((c) => `[${c.key}]${c.suggested ? " ★" : ""} ${c.title} (${KIND_LABEL[c.kind]}, ${c.year ?? "?"}, lang: ${c.language ?? "?"}) — ${c.overview.slice(0, 220)}`)
     .join("\n");
 
   const ask = [req.vibe && `Vibe: ${req.vibe}`, req.music && `Music: ${req.music}`, req.plot && `Plot: ${req.plot}`, req.eras?.length && `Eras: ${req.eras.join(", ")} (spread picks across them)`, req.image && "They also shared a photo of a setting.",
@@ -313,9 +343,10 @@ async function rankCandidates(client: Anthropic, req: RecommendRequest, profile:
     .join("\n");
 
   const response = await client.messages.parse({
-    model: MODEL,
-    max_tokens: 4000,
-    system: `You are a film and TV curator picking what someone should watch tonight. Choose only from the candidate list, by id. When both films and series are wanted, mix them unless the user's words lean one way. Honour anything the user rules out, such as a country or language (each candidate's original language is given as an ISO code). Prefer a varied set (not all the same director or decade unless asked). Music describes a feeling: pick titles that feel like it, and include at most one title directly tied to the artist (one they made music for, appear in, or that is about them). Write reasons that speak to the user's own words.
+    model: PICK_MODEL,
+    max_tokens: 16000, // thinking counts toward this as well as the answer
+    output_config: { effort: "low", format: zodOutputFormat(PicksSchema) },
+    system: `You are a film and TV curator picking what someone should watch tonight. Choose only from the candidate list, by id. When both films and series are wanted, mix them unless the user's words lean one way. Honour anything the user rules out, such as a country or language (each candidate's original language is given as an ISO code). Prefer a varied set (not all the same director or decade unless asked). Music describes a feeling: pick titles that feel like it, and include at most one title directly tied to the artist (one they made music for, appear in, or that is about them). Titles marked ★ were named by an expert curator as strong matches for this exact request: favour them, especially near the top. When both films and series are wanted, put the best film and the best series near the top. Write reasons that speak to the user's own words.
 Requirements are firm. Use your own knowledge of each title, not just the short summary given: a show about murders that is set in Philadelphia does not fit "set in Florida". Leave out anything you are not confident meets every requirement. A shorter list of accurate picks is far better than a full list with a wrong one.`,
     messages: [
       {
@@ -323,16 +354,16 @@ Requirements are firm. Use your own knowledge of each title, not just the short 
         content: `What they asked for:\n${ask}\n\nYour read of it: ${profile.summary}${profile.music_feel ? `\nThe music feels like: ${profile.music_feel}` : ""}\nRequirements: ${profile.must_match.length ? profile.must_match.join("; ") : "none"}\n\nCandidates:\n${list}\n\nRank up to ${Math.min(MAX_PICKS, candidates.length)} that meet the requirements, best first. The first ${SHOWN_PICKS} are shown together, so make them a strong, varied set on their own.`,
       },
     ],
-    output_config: { format: zodOutputFormat(PicksSchema) },
   });
+  if (response.stop_reason === "refusal") throw new DeclinedError();
   if (!response.parsed_output) throw new Error(`Could not rank results (stop_reason: ${response.stop_reason})`);
 
   const byKey = new Map(candidates.map((c) => [c.key, c]));
   // Drop any id the model didn't actually get from us.
   return response.parsed_output.picks
     .filter((p) => p.meets_requirements) // the model flagged its own misfit
-    .map((p) => ({ item: byKey.get(p.id.replace(/^\[|\]$/g, "")), reason: p.reason }))
-    .filter((p): p is { item: Candidate; reason: string } => !!p.item)
+    .map((p) => ({ item: byKey.get(p.id.replace(/^\[|\]$/g, "")), reason: p.reason, tag: p.tag }))
+    .filter((p): p is { item: Candidate; reason: string; tag: string } => !!p.item)
     .slice(0, MAX_PICKS);
 }
 
@@ -397,7 +428,7 @@ function cardServices(watch: Watch, mine: Set<string>) {
   return ordered.filter((s) => !seen.has(s.base) && seen.add(s.base)).slice(0, 5).map(({ name, logo }) => ({ name, logo }));
 }
 
-function toResult(item: Candidate, reason: string, watch?: Watch, mine: Set<string> = new Set()) {
+function toResult(item: Candidate, reason: string, tag: string, watch?: Watch, mine: Set<string> = new Set()) {
   return {
     key: item.key,
     id: item.id,
@@ -409,6 +440,7 @@ function toResult(item: Candidate, reason: string, watch?: Watch, mine: Set<stri
     poster: item.posterPath ? POSTER_BASE + item.posterPath : null,
     url: `https://www.themoviedb.org/${item.kind}/${item.id}`,
     reason,
+    tag,
     // null = not looked up yet; the page asks /api/watch when it shows the card.
     streaming: watch ? cardServices(watch, mine) : null,
     watchUrl: watch ? watch.link : null,
@@ -589,7 +621,7 @@ export default {
 
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
     try {
-      const profile = await buildProfile(client, req);
+      const profile = await buildProfile(client, req, effortSetting(env.PROFILE_EFFORT, "low"));
       // "My services": map the picked names to TMDB's provider ids for this region.
       let filter: ServiceFilter = null;
       if (req.services.size) {
@@ -607,19 +639,20 @@ export default {
         // only what's on the user's services. The reserve comes back with streaming info filled in.
         const checked = await Promise.all(picks.map(async (p) => ({ ...p, watch: await watchProviders(env, p.item.kind, p.item.id, req.region!) })));
         const available = checked.filter((p) => p.watch.services.some((s) => req.services.has(s.base)));
-        const all = available.map(({ item, reason, watch }) => toResult(item, reason, watch, req.services));
+        const all = available.map(({ item, reason, tag, watch }) => toResult(item, reason, tag, watch, req.services));
         return json({ profile, results: all.slice(0, SHOWN_PICKS), reserve: all.slice(SHOWN_PICKS) }, 200, cors);
       }
       const results = await Promise.all(
-        picks.slice(0, SHOWN_PICKS).map(async ({ item, reason }) => toResult(item, reason, await watchProviders(env, item.kind, item.id, req.region!))),
+        picks.slice(0, SHOWN_PICKS).map(async ({ item, reason, tag }) => toResult(item, reason, tag, await watchProviders(env, item.kind, item.id, req.region!))),
       );
-      const reserve = picks.slice(SHOWN_PICKS).map(({ item, reason }) => toResult(item, reason));
+      const reserve = picks.slice(SHOWN_PICKS).map(({ item, reason, tag }) => toResult(item, reason, tag));
       return json({ profile, results, reserve }, 200, cors);
     } catch (err) {
       console.error(err);
       if (err instanceof Anthropic.RateLimitError) return json({ error: "Busy right now, try again in a moment." }, 429, cors);
       if (err instanceof Anthropic.AuthenticationError) return json({ error: "The Anthropic API key was rejected. Check ANTHROPIC_API_KEY." }, 500, cors);
       if (err instanceof TmdbAuthError) return json({ error: "The TMDB token was rejected. Check TMDB_TOKEN." }, 500, cors);
+      if (err instanceof DeclinedError) return json({ error: "We can't search for that one. Try describing the vibe another way." }, 422, cors);
       if (err instanceof Anthropic.APIError) {
         // e.g. "credit balance is too low" — worth showing as-is.
         return json({ error: `The AI service had a problem (${err.status ?? "network"}): ${err.message.slice(0, 200)}` }, 502, cors);

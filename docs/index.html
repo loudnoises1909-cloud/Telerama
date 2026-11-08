@@ -122,8 +122,16 @@
     /* ---------- Results ---------- */
     .status { max-width: 940px; margin: 26px auto 0; text-align: center; color: var(--muted); min-height: 1.4em; line-height: 1.5; }
     .status.error { color: var(--error); }
-    .read { max-width: 820px; margin: 30px auto 0; text-align: center; font-family: var(--serif); font-style: italic; font-size: clamp(1.2rem, 3.4vw, 1.55rem); color: #c9bea9; line-height: 1.35; }
+    .read { max-width: 820px; margin: 34px auto 0; text-align: center; font-family: var(--serif); font-style: italic; font-size: clamp(1.2rem, 3.2vw, 1.5rem); color: #d8ccb4; line-height: 1.45; }
     .read:empty { display: none; }
+    .lean { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; max-width: 820px; margin: 18px auto 0; }
+    .lean:empty { display: none; }
+    .lean > span { font-size: 0.7rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold-soft); margin-right: 4px; }
+    .lean button { border: 1px solid var(--line-strong); background: rgba(217, 196, 155, 0.06); color: var(--text); border-radius: 999px;
+                   padding: 8px 15px; font: inherit; font-size: 0.88rem; cursor: pointer; transition: all 0.2s; }
+    .lean button:hover { border-color: var(--gold); color: var(--gold); }
+    .lean button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+    .lean button:disabled { opacity: 0.5; cursor: wait; }
     .results { max-width: 1180px; margin: 24px auto 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 18px; }
     .card { position: relative; display: flex; gap: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: rgba(12, 13, 19, 0.9); transition: border-color 0.2s; }
     .card:hover { border-color: var(--line-strong); }
@@ -416,6 +424,7 @@
 
     <p class="status" id="status" role="status"></p>
     <p class="read" id="read"></p>
+    <div class="lean" id="lean"></div>
     <section class="results" id="results" aria-live="polite"></section>
     <section class="library" id="library" hidden aria-live="polite"></section>
   </div>
@@ -666,7 +675,7 @@
 
     async function search(body, { shuffling = false } = {}) {
       setBusy(true, shuffling);
-      if (!shuffling) { $('read').textContent = ''; $('results').innerHTML = ''; }
+      if (!shuffling) { $('read').textContent = ''; $('lean').innerHTML = ''; $('results').innerHTML = ''; }
       let i = 0;
       setStatus(LOADING[0]);
       const ticker = setInterval(() => setStatus(LOADING[++i % LOADING.length]), 2500);
@@ -680,7 +689,8 @@
           return;
         }
         setStatus('');
-        $('read').textContent = data.profile?.summary ? `“${data.profile.summary}”` : '';
+        $('read').textContent = data.profile?.vibe_picture || (data.profile?.summary ? `“${data.profile.summary}”` : '');
+        if (!shuffling) showDirections(data.profile?.directions);
         suggestedFolder = folderNameFor(data.profile, body);
         reserve = data.reserve || [];
         show(data.results);
@@ -715,6 +725,27 @@
       shown = [];
       search(body);
     };
+
+    // Two ways to narrow the search, as one-tap buttons: the refinement is added to the vibe and
+    // the search runs again, so people can see exactly what changed.
+    function showDirections(directions) {
+      const box = $('lean');
+      box.innerHTML = '';
+      const usable = (directions || []).filter((d) => d?.label && d?.refine).slice(0, 2);
+      if (!usable.length) return;
+      box.append(el('span', { textContent: 'Lean into' }));
+      for (const d of usable) {
+        const b = el('button', { type: 'button', textContent: d.label });
+        b.onclick = () => {
+          const vibe = $('vibe').value.trim();
+          $('vibe').value = vibe ? `${vibe.replace(/[.\s]*$/, '')}. ${d.refine}` : d.refine;
+          $('vibe').dispatchEvent(new Event('input'));
+          box.querySelectorAll('button').forEach((x) => (x.disabled = true));
+          $('form').requestSubmit();
+        };
+        box.append(b);
+      }
+    }
 
     function onShuffle() {
       if (!lastBody) return;
@@ -765,8 +796,18 @@
     function show(items) {
       shown.push(...items.map((m) => m.key).filter(Boolean));
       $('results').innerHTML = '';
-      // The best match gets the spotlight; the rest follow.
-      items.forEach((m, i) => $('results').append(card(m, i === 0)));
+      // The best match gets the spotlight; with films and series, the best of each does.
+      const both = lastBody?.kinds?.length === 2;
+      const tops = both
+        ? [items.find((m) => m.kind === 'tv'), items.find((m) => m.kind === 'movie')].filter(Boolean)
+        : items.slice(0, 1);
+      const label = (m) => {
+        const base = both && tops.length > 1 ? (m.kind === 'tv' ? 'Top series' : 'Top film') : 'Your pick';
+        return forTwo() ? `${base} for two` : base;
+      };
+      tops.sort((a, b) => items.indexOf(a) - items.indexOf(b));
+      for (const m of tops) $('results').append(card(m, true, label(m)));
+      for (const m of items) if (!tops.includes(m)) $('results').append(card(m));
       $('results').append(shuffleTile());
       const top = $('read').textContent ? $('read') : $('results');
       if (top.getBoundingClientRect().top < 0) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -819,7 +860,7 @@
       return b;
     }
 
-    function card(m, top = false) {
+    function card(m, top = false, eyebrow = '') {
       const poster = el('a', { className: 'poster', href: m.url, target: '_blank', rel: 'noopener', ariaLabel: m.title });
       if (m.poster) poster.style.backgroundImage = `url("${m.poster}")`;
       let share = null;
@@ -832,9 +873,9 @@
       const article = el('article', { className: 'card' + (top ? ' top' : '') },
         poster,
         el('div', { className: 'info' },
-          top ? el('div', { className: 'eyebrow', textContent: forTwo() ? 'Your pick for two' : 'Your pick' }) : null,
+          top ? el('div', { className: 'eyebrow', textContent: eyebrow || (forTwo() ? 'Your pick for two' : 'Your pick') }) : null,
           el('h3', {}, el('a', { href: m.url, target: '_blank', rel: 'noopener', textContent: m.title })),
-          el('div', { className: 'meta', textContent: [m.year, m.rating ? `★ ${m.rating}` : null].filter(Boolean).join(' · ') },
+          el('div', { className: 'meta', textContent: [m.year, m.tag, m.rating ? `★ ${m.rating}` : null].filter(Boolean).join(' · ') },
             m.kind === 'tv' ? el('span', { className: 'kind-tag', textContent: 'Series' }) : null),
           el('p', { className: 'reason', textContent: m.reason }),
           top && m.overview ? el('p', { className: 'overview', textContent: m.overview.length > 240 ? m.overview.slice(0, 237).trimEnd() + '…' : m.overview }) : null,
@@ -871,8 +912,8 @@
 
     // Keep what a saved card needs, so it still shows without searching again.
     function rememberItem(m) {
-      const { key, id, kind, title, year, rating, poster, reason, url, watchUrl } = m;
-      lib.items[key] = { key, id, kind, title, year, rating, poster, reason, url, watchUrl, streaming: m.streaming || [], savedAt: Date.now() };
+      const { key, id, kind, title, year, rating, tag, poster, reason, url, watchUrl } = m;
+      lib.items[key] = { key, id, kind, title, year, rating, tag, poster, reason, url, watchUrl, streaming: m.streaming || [], savedAt: Date.now() };
     }
 
     function setMember(folder, m, on) {
@@ -972,7 +1013,7 @@
 
     function setLibrary(open) {
       $('library').hidden = !open;
-      for (const id of ['form', 'status', 'read', 'results']) $(id).hidden = open;
+      for (const id of ['form', 'status', 'read', 'lean', 'results']) $(id).hidden = open;
       openFolderId = null;
       if (open) refreshLibrary();
       updateLibToggle();
@@ -1161,7 +1202,7 @@
       ctx.font = '600 72px "Cormorant Garamond"'; ctx.fillStyle = '#f2ead9';
       for (const l of wrap(ctx, m.title, 940, 2)) { ctx.fillText(l, W / 2, y); y += 78; }
       ctx.font = '500 28px Manrope'; ctx.fillStyle = '#9a958c';
-      ctx.fillText([m.year, m.kind === 'tv' ? 'Series' : 'Film', m.rating ? `★ ${m.rating}` : null].filter(Boolean).join('  ·  '), W / 2, y - 14);
+      ctx.fillText([m.year, m.kind === 'tv' ? 'Series' : 'Film', m.tag, m.rating ? `★ ${m.rating}` : null].filter(Boolean).join('  ·  '), W / 2, y - 14);
       y += 62;
       ctx.font = 'italic 500 42px "Cormorant Garamond"'; ctx.fillStyle = '#e3d9c6';
       for (const l of wrap(ctx, `“${m.reason}”`, 900, 3)) { ctx.fillText(l, W / 2, y); y += 54; }

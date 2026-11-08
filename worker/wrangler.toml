@@ -8,9 +8,11 @@ keep_vars = true
 [vars]
 # Comma-separated list of sites allowed to call this API.
 ALLOWED_ORIGINS = "https://loudnoises1909-cloud.github.io,http://localhost:8000"
-# Daily search caps (Claude costs about a cent a search). Raise these as more people use it.
-DAILY_SEARCHES_PER_PERSON = "30"
-DAILY_SEARCHES_TOTAL = "300"
+# Daily search caps (Claude costs about 3-4 cents a search). Raise these as more people use it.
+DAILY_SEARCHES_PER_PERSON = "15"
+DAILY_SEARCHES_TOTAL = "100"
+# How hard Opus thinks when reading a request: "low" (fastest, cheapest), "medium" or "high".
+PROFILE_EFFORT = "low"
 
 # Secrets — set these with `npx wrangler secret put <NAME>`, never commit them:
 #   ANTHROPIC_API_KEY   from console.anthropic.com

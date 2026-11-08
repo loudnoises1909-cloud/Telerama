@@ -3,8 +3,8 @@ import { DurableObject } from "cloudflare:workers";
 // Daily search caps, so a shared link can't run up the Claude bill. One instance holds every
 // counter, which keeps the check-and-increment atomic; at a few hundred searches a day that's
 // far within what a single Durable Object handles.
-export const DAILY_PER_PERSON = 30;
-export const DAILY_TOTAL = 300;
+export const DAILY_PER_PERSON = 15;
+export const DAILY_TOTAL = 100;
 
 export type LimitResult = { ok: true } | { ok: false; reason: "person" | "total" };
 

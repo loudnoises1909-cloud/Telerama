@@ -48,10 +48,10 @@ On GitHub: **Settings → Pages → Deploy from a branch →** pick the branch a
 
 ## Limits
 
-Searches are the only part that costs money (Claude, about a cent each), so they're capped:
+Searches are the only part that costs money (Claude Opus reads the request and Claude Haiku ranks the picks: roughly 3-4 cents a search), so they're capped:
 
 - **5 per minute** per visitor (Cloudflare's rate limiter, `SEARCH_BURST` in `worker/wrangler.toml`).
-- **30 per visitor per day** and **300 per day in total** (`DAILY_SEARCHES_PER_PERSON` and `DAILY_SEARCHES_TOTAL` in `worker/wrangler.toml`, counted in a Durable Object). Days reset at midnight UTC.
+- **15 per visitor per day** and **100 per day in total** (`DAILY_SEARCHES_PER_PERSON` and `DAILY_SEARCHES_TOTAL` in `worker/wrangler.toml`, counted in a Durable Object). Days reset at midnight UTC.
 
 Raise the numbers in `wrangler.toml` and push to change them. Keep a spend limit (or auto-reload off) in the Anthropic console as the final backstop.
 
