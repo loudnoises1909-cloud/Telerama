@@ -1,6 +1,6 @@
-# Telerama
+# Shuffle Bubble
 
-Film and series recommendations from a vibe, the music you're into, a photo of your room or a place, an era, or a plot idea.
+Find your flick. Get in your bubble. Film and series recommendations from a vibe, the music you're into, a photo of your room or a place, an era, or a plot idea.
 
 ## How it works
 

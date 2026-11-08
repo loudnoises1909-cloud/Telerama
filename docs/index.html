@@ -3,12 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Telerama</title>
-  <meta name="description" content="Pictures for the night: film and series picks from a vibe, a song, a plot, an era or a photo of your room." />
+  <title>Shuffle Bubble</title>
+  <meta name="description" content="Find your flick. Get in your bubble. Film and series picks from a vibe, a song, a plot, an era or a photo of your room." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Ccircle%20cx%3D%2232%22%20cy%3D%2232%22%20r%3D%2229%22%20fill%3D%22%230b0d1a%22%20stroke%3D%22%23d9c49b%22%20stroke-width%3D%223%22/%3E%3Cpath%20d%3D%22M32%2018Q32%2032%2036%2032Q32%2032%2032%2046Q32%2032%2028%2032Q32%2032%2032%2018ZM18%2032Q32%2032%2032%2028Q32%2032%2046%2032Q32%2032%2032%2036Q32%2032%2018%2032Z%22%20fill%3D%22%23f3e2bb%22/%3E%3Cpath%20d%3D%22M15%2024A19%2019%200%200%201%2028%2013%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%20opacity%3D%22.6%22/%3E%3C/svg%3E" />
   <meta name="theme-color" content="#06070c" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Manrope:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Josefin+Sans:wght@300&family=Manrope:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
     :root {
       --bg: #05060a;
@@ -37,14 +38,15 @@
 
     /* ---------- Header ---------- */
     header { text-align: center; padding: 64px 0 36px; }
-    .mark { display: block; width: min(380px, 80vw); height: auto; margin: 0 auto 18px; overflow: visible; }
+    .mark { display: block; width: clamp(104px, 22vw, 156px); height: auto; margin: 0 auto 26px; overflow: visible; }
     h1 {
-      font-family: var(--serif); font-weight: 600; line-height: 1;
-      font-size: clamp(2.6rem, 9vw, 5.6rem); letter-spacing: 0.32em; padding-left: 0.32em; /* balances the trailing letter-space */
+      font-family: 'Josefin Sans', var(--sans); font-weight: 300; line-height: 1; text-transform: uppercase; white-space: nowrap;
+      font-size: clamp(1.45rem, 6.2vw, 3.1rem); letter-spacing: 0.28em; padding-left: 0.28em; /* balances the trailing letter-space */
       background: linear-gradient(180deg, #f6ead0 0%, #d9c49b 45%, #9c8457 100%);
       -webkit-background-clip: text; background-clip: text; color: transparent;
     }
-    .sub { margin-top: 16px; font-size: 0.78rem; letter-spacing: 0.5em; padding-left: 0.5em; color: var(--gold-soft); text-transform: uppercase; }
+    .sub span { display: inline-block; } /* on narrow screens, wrap between the two sentences */
+    .sub { margin-top: 18px; font-size: 0.78rem; letter-spacing: 0.4em; padding-left: 0.4em; color: var(--gold-soft); text-transform: uppercase; }
 
     /* ---------- Form ---------- */
     form {
@@ -158,7 +160,7 @@
     }
     @media (max-width: 560px) {
       header { padding: 40px 0 28px; }
-      .sub { letter-spacing: 0.32em; padding-left: 0.32em; /* balances the trailing letter-space */ }
+      .sub { font-size: 0.7rem; letter-spacing: 0.24em; padding-left: 0.24em; /* balances the trailing letter-space */ }
       form { padding: 22px 18px 24px; border-radius: 18px; }
       .row { grid-template-columns: 1fr; }
       .results { grid-template-columns: 1fr; }
@@ -171,16 +173,35 @@
 
   <div class="wrap">
     <header>
-      <!-- Eight four-point stars, one for each decade of picks, arched like a starlit ceiling. -->
-      <svg class="mark" viewBox="0 0 420 92" aria-hidden="true">
+      <!-- The starlit bubble: a glass sphere holding its own night sky, the world a film shuts out. -->
+      <svg class="mark" viewBox="0 0 200 200" aria-hidden="true">
         <defs>
-          <linearGradient id="starGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff3d6" /><stop offset="1" stop-color="#c8ad78" /></linearGradient>
-          <filter id="starGlow"><feGaussianBlur stdDeviation="2.2" /></filter>
+          <radialGradient id="bGlass" cx="38%" cy="32%" r="75%">
+            <stop offset="0" stop-color="#fff" stop-opacity=".16" /><stop offset=".55" stop-color="#d9c49b" stop-opacity=".04" />
+            <stop offset=".9" stop-color="#d9c49b" stop-opacity=".16" /><stop offset="1" stop-color="#f3e2bb" stop-opacity=".5" />
+          </radialGradient>
+          <linearGradient id="bIris" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#b9d4ff" stop-opacity=".55" /><stop offset=".4" stop-color="#f3e2bb" stop-opacity=".2" />
+            <stop offset=".7" stop-color="#f7b8d2" stop-opacity=".45" /><stop offset="1" stop-color="#d9c49b" stop-opacity=".7" />
+          </linearGradient>
+          <linearGradient id="bGold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff3d6" /><stop offset="1" stop-color="#c8ad78" /></linearGradient>
+          <filter id="bGlow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.4" /></filter>
+          <filter id="bHalo" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="8" /></filter>
+          <clipPath id="bInner"><circle cx="100" cy="100" r="88" /></clipPath>
         </defs>
-        <g id="arc"></g>
+        <circle cx="100" cy="100" r="96" fill="#d9c49b" opacity=".1" filter="url(#bHalo)" />
+        <g clip-path="url(#bInner)">
+          <rect width="200" height="200" fill="#0a0c18" opacity=".55" />
+          <g fill="#fff4e2"><circle cx="102.4" cy="126.9" r="0.94" opacity="0.41"/><circle cx="148.7" cy="121.6" r="1.51" opacity="0.86"/><circle cx="103.8" cy="60.6" r="1.09" opacity="0.49"/><circle cx="112.8" cy="124.2" r="0.74" opacity="0.95"/><circle cx="135.9" cy="33.6" r="1.38" opacity="0.44"/><circle cx="75.6" cy="161.9" r="1.31" opacity="0.90"/><circle cx="118.0" cy="83.1" r="1.17" opacity="0.77"/><circle cx="64.6" cy="98.7" r="1.02" opacity="0.36"/><circle cx="171.6" cy="68.8" r="1.10" opacity="0.51"/><circle cx="153.4" cy="65.6" r="1.47" opacity="0.89"/><circle cx="46.0" cy="97.2" r="1.16" opacity="0.60"/><circle cx="124.5" cy="139.4" r="1.39" opacity="0.33"/><circle cx="163.7" cy="119.1" r="0.81" opacity="0.67"/><circle cx="51.6" cy="108.8" r="1.60" opacity="0.44"/><circle cx="67.7" cy="119.7" r="1.20" opacity="0.49"/><circle cx="55.2" cy="157.1" r="0.85" opacity="0.69"/><circle cx="122.0" cy="84.9" r="0.57" opacity="0.46"/><circle cx="106.3" cy="34.4" r="0.76" opacity="0.53"/><circle cx="125.0" cy="151.1" r="0.55" opacity="0.79"/><circle cx="165.1" cy="50.1" r="1.31" opacity="0.97"/><circle cx="144.9" cy="105.1" r="1.56" opacity="0.84"/><circle cx="31.0" cy="143.5" r="1.18" opacity="0.87"/><circle cx="90.1" cy="135.4" r="0.99" opacity="0.40"/><circle cx="39.4" cy="155.8" r="0.86" opacity="0.31"/><circle cx="133.2" cy="109.6" r="1.36" opacity="0.55"/><circle cx="93.4" cy="125.3" r="1.58" opacity="0.60"/><circle cx="105.3" cy="119.8" r="0.56" opacity="0.42"/><circle cx="85.6" cy="70.9" r="0.54" opacity="0.64"/><circle cx="100.5" cy="183.9" r="0.63" opacity="0.67"/><circle cx="108.0" cy="46.9" r="1.59" opacity="0.63"/><circle cx="102.8" cy="153.8" r="0.54" opacity="0.59"/><circle cx="100.7" cy="179.2" r="1.41" opacity="0.65"/><circle cx="141.5" cy="108.4" r="0.77" opacity="0.45"/><circle cx="109.1" cy="177.8" r="0.66" opacity="0.34"/><circle cx="156.8" cy="72.4" r="1.59" opacity="0.58"/><circle cx="155.2" cy="60.4" r="1.37" opacity="0.82"/><circle cx="74.4" cy="100.9" r="0.73" opacity="0.91"/><circle cx="165.3" cy="52.4" r="0.87" opacity="0.76"/><circle cx="120.6" cy="35.9" r="1.40" opacity="0.67"/><circle cx="60.8" cy="42.5" r="0.80" opacity="0.95"/><circle cx="122.1" cy="93.8" r="1.57" opacity="0.97"/><circle cx="91.3" cy="84.6" r="1.49" opacity="0.39"/><circle cx="167.3" cy="86.5" r="0.57" opacity="0.42"/><circle cx="58.1" cy="52.4" r="1.32" opacity="0.95"/><circle cx="100.9" cy="104.7" r="1.51" opacity="0.31"/><circle cx="120.4" cy="80.0" r="1.39" opacity="0.85"/><circle cx="144.9" cy="56.7" r="1.47" opacity="0.44"/><circle cx="77.1" cy="57.5" r="1.48" opacity="0.84"/><circle cx="40.0" cy="110.9" r="0.53" opacity="0.32"/><circle cx="51.3" cy="67.1" r="1.45" opacity="0.73"/><circle cx="132.5" cy="138.7" r="1.34" opacity="0.67"/><circle cx="176.7" cy="105.1" r="1.41" opacity="0.36"/><circle cx="50.1" cy="86.0" r="1.37" opacity="0.52"/><circle cx="106.0" cy="158.3" r="1.56" opacity="0.37"/><circle cx="149.8" cy="143.6" r="1.47" opacity="0.66"/><circle cx="28.8" cy="131.4" r="1.35" opacity="0.35"/><circle cx="127.3" cy="74.8" r="0.83" opacity="0.89"/><circle cx="33.7" cy="135.1" r="0.68" opacity="0.91"/><circle cx="114.5" cy="129.0" r="1.04" opacity="0.54"/><circle cx="22.9" cy="79.2" r="1.28" opacity="0.30"/><circle cx="76.5" cy="157.4" r="1.04" opacity="0.80"/><circle cx="77.0" cy="102.3" r="0.77" opacity="0.89"/><circle cx="54.3" cy="157.6" r="1.58" opacity="0.74"/><circle cx="70.9" cy="41.2" r="0.84" opacity="0.94"/><circle cx="21.5" cy="116.5" r="0.84" opacity="0.91"/><circle cx="115.1" cy="36.0" r="0.99" opacity="0.40"/><circle cx="106.7" cy="49.9" r="1.23" opacity="0.39"/><circle cx="127.7" cy="115.8" r="1.39" opacity="0.42"/><circle cx="141.8" cy="70.4" r="1.13" opacity="0.55"/><circle cx="81.4" cy="82.3" r="0.94" opacity="0.96"/></g>
+          <path d="M78 79Q78 92 81.9 92Q78 92 78 105Q78 92 74.1 92Q78 92 78 79ZM65 92Q78 92 78 88.1Q78 92 91 92Q78 92 78 95.9Q78 92 65 92Z" fill="#fff1d0" filter="url(#bGlow)" opacity=".7"/><path d="M78 79Q78 92 81.9 92Q78 92 78 105Q78 92 74.1 92Q78 92 78 79ZM65 92Q78 92 78 88.1Q78 92 91 92Q78 92 78 95.9Q78 92 65 92Z" fill="url(#bGold)"/><path d="M122 62Q122 70 124.4 70Q122 70 122 78Q122 70 119.6 70Q122 70 122 62ZM114 70Q122 70 122 67.6Q122 70 130 70Q122 70 122 72.4Q122 70 114 70Z" fill="#fff1d0" filter="url(#bGlow)" opacity=".7"/><path d="M122 62Q122 70 124.4 70Q122 70 122 78Q122 70 119.6 70Q122 70 122 62ZM114 70Q122 70 122 67.6Q122 70 130 70Q122 70 122 72.4Q122 70 114 70Z" fill="url(#bGold)"/><path d="M118 116Q118 126 121.0 126Q118 126 118 136Q118 126 115.0 126Q118 126 118 116ZM108 126Q118 126 118 123.0Q118 126 128 126Q118 126 118 129.0Q118 126 108 126Z" fill="#fff1d0" filter="url(#bGlow)" opacity=".7"/><path d="M118 116Q118 126 121.0 126Q118 126 118 136Q118 126 115.0 126Q118 126 118 116ZM108 126Q118 126 118 123.0Q118 126 128 126Q118 126 118 129.0Q118 126 108 126Z" fill="url(#bGold)"/><path d="M64 126Q64 132 65.8 132Q64 132 64 138Q64 132 62.2 132Q64 132 64 126ZM58 132Q64 132 64 130.2Q64 132 70 132Q64 132 64 133.8Q64 132 58 132Z" fill="#fff1d0" filter="url(#bGlow)" opacity=".7"/><path d="M64 126Q64 132 65.8 132Q64 132 64 138Q64 132 62.2 132Q64 132 64 126ZM58 132Q64 132 64 130.2Q64 132 70 132Q64 132 64 133.8Q64 132 58 132Z" fill="url(#bGold)"/><path d="M140 99Q140 104 141.5 104Q140 104 140 109Q140 104 138.5 104Q140 104 140 99ZM135 104Q140 104 140 102.5Q140 104 145 104Q140 104 140 105.5Q140 104 135 104Z" fill="#fff1d0" filter="url(#bGlow)" opacity=".7"/><path d="M140 99Q140 104 141.5 104Q140 104 140 109Q140 104 138.5 104Q140 104 140 99ZM135 104Q140 104 140 102.5Q140 104 145 104Q140 104 140 105.5Q140 104 135 104Z" fill="url(#bGold)"/>
+        </g>
+        <circle cx="100" cy="100" r="90" fill="url(#bGlass)" />
+        <circle cx="100" cy="100" r="90" fill="none" stroke="url(#bIris)" stroke-width="2.2" />
+        <path d="M46 70 A62 62 0 0 1 92 36" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".55" />
+        <path d="M150 140 A62 62 0 0 1 132 156" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity=".25" />
       </svg>
-      <h1>TELERAMA</h1>
-      <p class="sub">Pictures for the night</p>
+      <h1>Shuffle Bubble</h1>
+      <p class="sub"><span>Find your flick.</span> <span>Get in your bubble.</span></p>
     </header>
 
     <form id="form">
@@ -245,7 +266,7 @@
         </div>
       </div>
 
-      <button class="submit" id="submit" type="submit">Find my picture</button>
+      <button class="submit" id="submit" type="submit">Find my flick</button>
     </form>
 
     <p class="status" id="status" role="status"></p>
@@ -316,19 +337,6 @@
       build();
       addEventListener('resize', () => { build(); draw(performance.now()); });
       still ? draw(0) : requestAnimationFrame(loop);
-    })();
-
-    // ---------- Logo: arc of four-point stars ----------
-    (function arc() {
-      const g = $('arc'), n = 8, cx = 210, cy = 170, R = 150;
-      for (let i = 0; i < n; i++) {
-        const t = Math.PI * (1.18 + (0.64 * i) / (n - 1));
-        const x = cx + R * Math.cos(t), y = cy + R * Math.sin(t);
-        const s = 13 - Math.abs(i - (n - 1) / 2) * 1.6;
-        const d = `M${x} ${y - s}Q${x} ${y} ${x + s * .32} ${y}Q${x} ${y} ${x} ${y + s}Q${x} ${y} ${x - s * .32} ${y}Q${x} ${y} ${x} ${y - s}Z`
-                + `M${x - s} ${y}Q${x} ${y} ${x} ${y - s * .32}Q${x} ${y} ${x + s} ${y}Q${x} ${y} ${x} ${y + s * .32}Q${x} ${y} ${x - s} ${y}Z`;
-        g.insertAdjacentHTML('beforeend', `<path d="${d}" fill="#fff1d0" filter="url(#starGlow)" opacity=".7"/><path d="${d}" fill="url(#starGold)"/>`);
-      }
     })();
 
     // ---------- Eras: pick any number; "Any" clears ----------
@@ -414,7 +422,7 @@
     }
 
     // ---------- Search ----------
-    const LOADING = ['Reading the room…', 'Searching the night sky…', 'Checking what\'s streaming…'];
+    const LOADING = ['Reading the room…', 'Dimming the world outside…', 'Searching the night sky…', 'Checking what\'s streaming…'];
     const api = (path, body) => fetch(API_URL.replace(/\/$/, '') + path, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     }).then(async (res) => {
@@ -422,7 +430,7 @@
       if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
       return data;
     });
-    const errorText = (err) => (err.message === 'Failed to fetch' ? 'Could not reach the server. Try again in a moment.' : err.message);
+    const errorText = (err) => (err.message === 'Failed to fetch' ? 'The projector jammed. Try again in a moment.' : err.message);
 
     // One search = up to 20 ranked picks: 10 shown, 10 held back for the first Shuffle.
     // After that, Shuffle runs the same search again, skipping everything already shown.
@@ -432,13 +440,13 @@
       setBusy(true, shuffling);
       if (!shuffling) { $('read').textContent = ''; $('results').innerHTML = ''; }
       let i = 0;
-      setStatus(shuffling ? 'Finding 10 different picks…' : LOADING[0]);
+      setStatus(shuffling ? 'Blowing a new bubble…' : LOADING[0]);
       const ticker = setInterval(() => setStatus(LOADING[++i % LOADING.length]), 2500);
       try {
         const data = await api('/api/recommend', shuffling ? { ...body, exclude: shown } : body);
         if (!data.results?.length) {
           if (shuffling) { setStatus(''); tileDone(); }
-          else setStatus('Nothing matched that one. Try another era, or loosen the vibe.', true);
+          else setStatus('Nothing in the stars for that one. Loosen the vibe or try another decade.', true);
           return;
         }
         setStatus('');
@@ -465,7 +473,7 @@
         image: image ? { media_type: image.media_type, data: image.data } : undefined,
       };
       if (!body.vibe.trim() && !body.music.trim() && !body.plot.trim() && !eras.size && !image) {
-        setStatus('Give us one thing to go on: a vibe, a song, a plot, an era or a photo.', true);
+        setStatus('Give us one thing to go on: a vibe, a song, a plot, a decade or a photo.', true);
         $('vibe').focus();
         return;
       }
@@ -493,7 +501,7 @@
       const b = el('button', { type: 'button', className: 'shuffle-tile', id: 'shuffle' });
       b.innerHTML = SHUFFLE_ICON;
       b.append(el('strong', { textContent: 'Not quite it?' }),
-        el('span', { textContent: reserve.length ? 'Shuffle for 10 different picks' : 'Shuffle to search again, skipping these' }));
+        el('span', { textContent: reserve.length ? 'Pop it: 10 new picks, same mood' : 'Pop it: we\'ll search again, skipping these' }));
       b.onclick = onShuffle;
       return b;
     }
@@ -503,7 +511,7 @@
       if (!b) return;
       b.className = 'shuffle-tile done'; b.disabled = true; b.onclick = null;
       b.innerHTML = '';
-      b.append(el('strong', { textContent: 'That\'s every strong match' }), el('span', { textContent: 'Try tweaking the vibe or picking another era.' }));
+      b.append(el('strong', { textContent: 'That\'s every bubble for this one' }), el('span', { textContent: 'Try another vibe or decade.' }));
     }
 
     function setBusy(busy, shuffling = false) {
@@ -511,7 +519,7 @@
       const b = $('shuffle');
       if (!b || b.classList.contains('done')) return;
       b.disabled = busy;
-      if (busy && shuffling) b.querySelector('span').textContent = 'Shuffling…';
+      if (busy && shuffling) b.querySelector('span').textContent = 'Blowing a new bubble…';
     }
 
     function show(items) {
