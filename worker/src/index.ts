@@ -16,7 +16,9 @@ const LOGO_BASE = "https://image.tmdb.org/t/p/w92";
 const MAX_TEXT = 600;
 const MAX_IMAGE_BYTES = 3_500_000; // base64 length; the frontend resizes before upload
 const MAX_CANDIDATES = 40;
-const MAX_PICKS = 6;
+const SHOWN_PICKS = 10; // shown at once, with streaming info
+const MAX_PICKS = 20; // ranked per search; the rest wait behind the Shuffle button
+const MAX_EXCLUDE = 120;
 
 // TMDB's genre IDs are stable, so they're hardcoded rather than fetched on every request.
 const GENRES = {
@@ -46,6 +48,7 @@ interface RecommendRequest {
   plot?: string;
   eras?: string[]; // decades like "1970s"; empty or missing means any
   kinds: Kind[]; // films, series, or both
+  exclude: Set<string>; // candidate keys already shown, when shuffling
   region?: string; // ISO country code for streaming providers
   image?: { media_type: "image/jpeg" | "image/png" | "image/webp"; data: string };
 }
@@ -275,12 +278,12 @@ async function rankCandidates(client: Anthropic, req: RecommendRequest, profile:
 
   const response = await client.messages.parse({
     model: MODEL,
-    max_tokens: 1024,
+    max_tokens: 3000,
     system: `You are a film and TV curator picking what someone should watch tonight. Choose only from the candidate list, by id. When both films and series are wanted, mix them unless the user's words lean one way. Honour anything the user rules out, such as a country or language (each candidate's original language is given as an ISO code). Prefer a varied set (not all the same director or decade unless asked). Write reasons that speak to the user's own words.`,
     messages: [
       {
         role: "user",
-        content: `What they asked for:\n${ask}\n\nYour read of it: ${profile.summary}\n\nCandidates:\n${list}\n\nPick the best ${MAX_PICKS}.`,
+        content: `What they asked for:\n${ask}\n\nYour read of it: ${profile.summary}\n\nCandidates:\n${list}\n\nRank the best ${Math.min(MAX_PICKS, candidates.length)}, best first. The first ${SHOWN_PICKS} are shown together, so make them a strong, varied set on their own.`,
       },
     ],
     output_config: { format: zodOutputFormat(PicksSchema) },
@@ -308,6 +311,24 @@ async function watchProviders(env: Env, kind: Kind, id: number, region: string) 
     .slice(0, 5)
     .map((p) => ({ name: p.provider_name, logo: p.logo_path ? LOGO_BASE + p.logo_path : null }));
   return { services, link: here?.link ?? null };
+}
+
+function toResult(item: Candidate, reason: string, watch?: Awaited<ReturnType<typeof watchProviders>>) {
+  return {
+    key: item.key,
+    id: item.id,
+    kind: item.kind,
+    title: item.title,
+    year: item.year ? String(item.year) : null,
+    rating: item.rating,
+    overview: item.overview,
+    poster: item.posterPath ? POSTER_BASE + item.posterPath : null,
+    url: `https://www.themoviedb.org/${item.kind}/${item.id}`,
+    reason,
+    // null = not looked up yet; the page asks /api/watch when it shows the card.
+    streaming: watch ? watch.services : null,
+    watchUrl: watch ? watch.link : null,
+  };
 }
 
 // ---------- HTTP plumbing ----------
@@ -342,6 +363,26 @@ function parseKinds(body: any): Kind[] {
   return kinds.length ? kinds : ["movie"];
 }
 
+function parseRegion(body: any): string {
+  return /^[A-Z]{2}$/.test(body?.region ?? "") ? body.region : "US";
+}
+
+// Streaming info for cards the page shows later (the Shuffle reserve), kept out of the main
+// search so that one stays under the free plan's 50 outbound requests.
+async function handleWatch(env: Env, body: any) {
+  const items = (Array.isArray(body?.items) ? body.items : [])
+    .filter((i: any) => (i?.kind === "movie" || i?.kind === "tv") && Number.isInteger(i?.id) && i.id > 0)
+    .slice(0, SHOWN_PICKS) as { kind: Kind; id: number }[];
+  const region = parseRegion(body);
+  const entries = await Promise.all(
+    items.map(async (i) => {
+      const w = await watchProviders(env, i.kind, i.id, region);
+      return [`${i.kind}-${i.id}`, { streaming: w.services, watchUrl: w.link }] as const;
+    }),
+  );
+  return { watch: Object.fromEntries(entries) };
+}
+
 function parseRequest(body: any): RecommendRequest | string {
   const req: RecommendRequest = {
     vibe: clean(body?.vibe),
@@ -349,7 +390,12 @@ function parseRequest(body: any): RecommendRequest | string {
     plot: clean(body?.plot),
     eras: parseEras(body),
     kinds: parseKinds(body),
-    region: /^[A-Z]{2}$/.test(body?.region ?? "") ? body.region : "US",
+    region: parseRegion(body),
+    exclude: new Set(
+      (Array.isArray(body?.exclude) ? body.exclude : [])
+        .filter((k: unknown): k is string => typeof k === "string" && /^(movie|tv)-\d+$/.test(k))
+        .slice(0, MAX_EXCLUDE),
+    ),
   };
   const img = body?.image;
   if (img) {
@@ -367,7 +413,8 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
 
     const url = new URL(request.url);
-    if (request.method !== "POST" || url.pathname !== "/api/recommend") return json({ error: "Not found" }, 404, cors);
+    const route = url.pathname;
+    if (request.method !== "POST" || (route !== "/api/recommend" && route !== "/api/watch")) return json({ error: "Not found" }, 404, cors);
     // Only the allowed sites may spend your API credits.
     if (!cors["Access-Control-Allow-Origin"]) return json({ error: "Origin not allowed" }, 403, cors);
 
@@ -377,38 +424,34 @@ export default {
     } catch {
       return json({ error: "Invalid JSON" }, 400, cors);
     }
+    if (!env.TMDB_TOKEN) return json({ error: "Server is missing its TMDB_TOKEN secret." }, 500, cors);
+    if (route === "/api/watch") {
+      try {
+        return json(await handleWatch(env, body), 200, cors);
+      } catch (err) {
+        if (err instanceof TmdbAuthError) return json({ error: "The TMDB token was rejected. Check TMDB_TOKEN." }, 500, cors);
+        throw err;
+      }
+    }
+
     const req = parseRequest(body);
     if (typeof req === "string") return json({ error: req }, 400, cors);
 
     if (!env.ANTHROPIC_API_KEY) return json({ error: "Server is missing its ANTHROPIC_API_KEY secret." }, 500, cors);
-    if (!env.TMDB_TOKEN) return json({ error: "Server is missing its TMDB_TOKEN secret." }, 500, cors);
 
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
     try {
       const profile = await buildProfile(client, req);
-      const candidates = await gatherCandidates(env, profile, yearRanges(req, profile), req.kinds);
-      if (!candidates.length) return json({ profile, results: [] }, 200, cors);
+      const candidates = (await gatherCandidates(env, profile, yearRanges(req, profile), req.kinds))
+        .filter((c) => !req.exclude.has(c.key)); // already shown before a shuffle
+      if (!candidates.length) return json({ profile, results: [], reserve: [] }, 200, cors);
 
       const picks = await rankCandidates(client, req, profile, candidates);
       const results = await Promise.all(
-        picks.map(async ({ item, reason }) => {
-          const watch = await watchProviders(env, item.kind, item.id, req.region!);
-          return {
-            id: item.id,
-            kind: item.kind,
-            title: item.title,
-            year: item.year ? String(item.year) : null,
-            rating: item.rating,
-            overview: item.overview,
-            poster: item.posterPath ? POSTER_BASE + item.posterPath : null,
-            url: `https://www.themoviedb.org/${item.kind}/${item.id}`,
-            reason,
-            streaming: watch.services,
-            watchUrl: watch.link,
-          };
-        }),
+        picks.slice(0, SHOWN_PICKS).map(async ({ item, reason }) => toResult(item, reason, await watchProviders(env, item.kind, item.id, req.region!))),
       );
-      return json({ profile, results }, 200, cors);
+      const reserve = picks.slice(SHOWN_PICKS).map(({ item, reason }) => toResult(item, reason));
+      return json({ profile, results, reserve }, 200, cors);
     } catch (err) {
       console.error(err);
       if (err instanceof Anthropic.RateLimitError) return json({ error: "Busy right now, try again in a moment." }, 429, cors);

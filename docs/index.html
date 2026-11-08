@@ -135,6 +135,20 @@
     .where { font-size: 0.75rem; color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; }
     .where:hover { color: var(--gold); border-color: var(--gold-soft); }
 
+    .more { display: none; flex-direction: column; align-items: center; gap: 10px; margin: 30px auto 0; }
+    .more.show { display: flex; }
+    .shuffle {
+      display: inline-flex; align-items: center; gap: 10px; padding: 13px 26px; border-radius: 999px; cursor: pointer;
+      border: 1px solid var(--line-strong); background: rgba(12, 13, 19, 0.9); color: var(--gold);
+      font: inherit; font-size: 0.86rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; transition: all 0.2s;
+    }
+    .shuffle:hover { border-color: var(--gold); background: rgba(217, 196, 155, 0.08); }
+    .shuffle:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+    .shuffle:disabled { opacity: 0.55; cursor: wait; }
+    .shuffle svg { width: 16px; height: 16px; }
+    .more-note { font-size: 0.78rem; color: var(--faint); }
+    .checking { font-size: 0.75rem; color: var(--faint); }
+
     footer { position: relative; z-index: 1; max-width: 760px; margin: 56px auto 0; text-align: center; color: var(--faint); font-size: 0.72rem; line-height: 1.7; }
     footer a { color: var(--muted); }
 
@@ -237,6 +251,14 @@
     <p class="status" id="status" role="status"></p>
     <p class="read" id="read"></p>
     <section class="results" id="results" aria-live="polite"></section>
+    <div class="more" id="more">
+      <button type="button" class="shuffle" id="shuffle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg>
+        Shuffle
+      </button>
+      <span class="more-note" id="moreNote">10 different picks for the same request</span>
+    </div>
   </div>
 
   <footer>
@@ -401,8 +423,47 @@
 
     // ---------- Search ----------
     const LOADING = ['Reading the room…', 'Searching the night sky…', 'Checking what\'s streaming…'];
+    const api = (path, body) => fetch(API_URL.replace(/\/$/, '') + path, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }).then(async (res) => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+      return data;
+    });
+    const errorText = (err) => (err.message === 'Failed to fetch' ? 'Could not reach the server. Try again in a moment.' : err.message);
 
-    $('form').onsubmit = async (e) => {
+    // One search = up to 20 ranked picks: 10 shown, 10 held back for the first Shuffle.
+    // After that, Shuffle runs the same search again, skipping everything already shown.
+    let lastBody = null, reserve = [], shown = [];
+
+    async function search(body, { shuffling = false } = {}) {
+      $('submit').disabled = true;
+      $('shuffle').disabled = true;
+      if (!shuffling) { $('read').textContent = ''; $('results').innerHTML = ''; $('more').classList.remove('show'); }
+      let i = 0;
+      setStatus(shuffling ? 'Finding 10 different picks…' : LOADING[0]);
+      const ticker = setInterval(() => setStatus(LOADING[++i % LOADING.length]), 2500);
+      try {
+        const data = await api('/api/recommend', shuffling ? { ...body, exclude: shown } : body);
+        if (!data.results?.length) {
+          if (shuffling) { setStatus('That\'s every strong match for this search. Try tweaking the vibe or era.'); $('more').classList.remove('show'); }
+          else setStatus('Nothing matched that one. Try another era, or loosen the vibe.', true);
+          return;
+        }
+        setStatus('');
+        $('read').textContent = data.profile?.summary ? `“${data.profile.summary}”` : '';
+        reserve = data.reserve || [];
+        show(data.results);
+      } catch (err) {
+        setStatus(errorText(err), true);
+      } finally {
+        clearInterval(ticker);
+        $('submit').disabled = false;
+        $('shuffle').disabled = false;
+      }
+    }
+
+    $('form').onsubmit = (e) => {
       e.preventDefault();
       const body = {
         vibe: $('vibe').value,
@@ -418,30 +479,48 @@
         $('vibe').focus();
         return;
       }
+      lastBody = body;
+      shown = [];
+      search(body);
+    };
 
-      $('submit').disabled = true;
-      $('results').innerHTML = '';
-      $('read').textContent = '';
-      let i = 0;
-      setStatus(LOADING[0]);
-      const ticker = setInterval(() => setStatus(LOADING[++i % LOADING.length]), 2500);
-
-      try {
-        const res = await fetch(API_URL.replace(/\/$/, '') + '/api/recommend', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
-        render(data);
-      } catch (err) {
-        setStatus(err.message === 'Failed to fetch' ? 'Could not reach the server. Try again in a moment.' : err.message, true);
-      } finally {
-        clearInterval(ticker);
-        $('submit').disabled = false;
+    $('shuffle').onclick = () => {
+      if (!lastBody) return;
+      if (reserve.length) {
+        // Already ranked: show them straight away, then fill in where to watch.
+        const next = reserve.splice(0, 10);
+        show(next);
+        fillWatch(next);
+      } else {
+        search(lastBody, { shuffling: true });
       }
     };
+
+    function show(items) {
+      shown.push(...items.map((m) => m.key).filter(Boolean));
+      $('results').innerHTML = '';
+      for (const m of items) $('results').append(card(m));
+      $('more').classList.add('show');
+      $('moreNote').textContent = reserve.length ? '10 different picks for the same request' : 'Searches again, skipping everything you\'ve seen';
+      const top = $('read').textContent ? $('read') : $('results');
+      if (top.getBoundingClientRect().top < 0) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    async function fillWatch(items) {
+      const pending = items.filter((m) => m.streaming === null);
+      if (!pending.length) return;
+      try {
+        const { watch } = await api('/api/watch', { region: lastBody.region, items: pending.map((m) => ({ kind: m.kind, id: m.id })) });
+        for (const m of pending) {
+          const w = watch[`${m.kind}-${m.id}`] || { streaming: [], watchUrl: null };
+          Object.assign(m, w);
+          document.querySelector(`[data-key="${m.key}"] .watch`)?.replaceWith(watchRow(m));
+        }
+      } catch {
+        // Leave the plain "Where to watch" link in place.
+        for (const m of pending) { m.streaming = []; document.querySelector(`[data-key="${m.key}"] .watch`)?.replaceWith(watchRow(m)); }
+      }
+    }
 
     function el(tag, props = {}, ...children) {
       const node = Object.assign(document.createElement(tag), props);
@@ -449,35 +528,30 @@
       return node;
     }
 
-    function render({ profile, results }) {
-      if (!results || !results.length) {
-        setStatus('Nothing matched that one. Try another era, or loosen the vibe.', true);
-        return;
-      }
-      setStatus('');
-      $('read').textContent = profile?.summary ? `“${profile.summary}”` : '';
+    function watchRow(m) {
+      if (m.streaming === null) return el('div', { className: 'watch' }, el('span', { className: 'checking', textContent: 'Checking where to watch…' }));
+      // Older backends sent plain names; newer ones send { name, logo } plus a watch page.
+      const services = m.streaming.map((s) => (typeof s === 'string' ? { name: s, logo: null } : s));
+      const href = m.watchUrl || m.url;
+      return el('div', { className: 'watch' },
+        ...services.map((s) => el('a', { className: 'service' + (s.logo ? '' : ' no-logo'), href, target: '_blank', rel: 'noopener', title: `Watch on ${s.name}` },
+          s.logo ? el('img', { src: s.logo, alt: '', loading: 'lazy' }) : null, s.name)),
+        el('a', { className: 'where', href, target: '_blank', rel: 'noopener', textContent: services.length ? 'All options →' : 'Where to watch →' }));
+    }
 
-      for (const m of results) {
-        const poster = el('a', { className: 'poster', href: m.url, target: '_blank', rel: 'noopener', ariaLabel: m.title });
-        if (m.poster) poster.style.backgroundImage = `url("${m.poster}")`;
-
-        // Older backends sent plain names; newer ones send { name, logo } plus a watch page.
-        const services = (m.streaming || []).map((s) => (typeof s === 'string' ? { name: s, logo: null } : s));
-        const watchHref = m.watchUrl || m.url;
-        const watch = el('div', { className: 'watch' },
-          ...services.map((s) => el('a', { className: 'service' + (s.logo ? '' : ' no-logo'), href: watchHref, target: '_blank', rel: 'noopener', title: `Watch on ${s.name}` },
-            s.logo ? el('img', { src: s.logo, alt: '', loading: 'lazy' }) : null, s.name)),
-          el('a', { className: 'where', href: watchHref, target: '_blank', rel: 'noopener', textContent: services.length ? 'All options →' : 'Where to watch →' }));
-
-        $('results').append(el('article', { className: 'card' },
-          poster,
-          el('div', { className: 'info' },
-            el('h3', {}, el('a', { href: m.url, target: '_blank', rel: 'noopener', textContent: m.title })),
-            el('div', { className: 'meta', textContent: [m.year, m.rating ? `★ ${m.rating}` : null].filter(Boolean).join(' · ') },
-              m.kind === 'tv' ? el('span', { className: 'kind-tag', textContent: 'Series' }) : null),
-            el('p', { className: 'reason', textContent: m.reason }),
-            watch)));
-      }
+    function card(m) {
+      const poster = el('a', { className: 'poster', href: m.url, target: '_blank', rel: 'noopener', ariaLabel: m.title });
+      if (m.poster) poster.style.backgroundImage = `url("${m.poster}")`;
+      const article = el('article', { className: 'card' },
+        poster,
+        el('div', { className: 'info' },
+          el('h3', {}, el('a', { href: m.url, target: '_blank', rel: 'noopener', textContent: m.title })),
+          el('div', { className: 'meta', textContent: [m.year, m.rating ? `★ ${m.rating}` : null].filter(Boolean).join(' · ') },
+            m.kind === 'tv' ? el('span', { className: 'kind-tag', textContent: 'Series' }) : null),
+          el('p', { className: 'reason', textContent: m.reason }),
+          watchRow({ ...m, streaming: m.streaming === undefined ? [] : m.streaming })));
+      if (m.key) article.dataset.key = m.key;
+      return article;
     }
   </script>
 </body>
