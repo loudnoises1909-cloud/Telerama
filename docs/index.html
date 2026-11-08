@@ -27,6 +27,7 @@
       --sans: 'Manrope', 'Helvetica Neue', Arial, sans-serif;
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
     html { background: var(--bg); }
     body {
       min-height: 100vh; color: var(--text); font-family: var(--sans);
@@ -124,7 +125,7 @@
     .read { max-width: 820px; margin: 30px auto 0; text-align: center; font-family: var(--serif); font-style: italic; font-size: clamp(1.2rem, 3.4vw, 1.55rem); color: #c9bea9; line-height: 1.35; }
     .read:empty { display: none; }
     .results { max-width: 1180px; margin: 24px auto 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 18px; }
-    .card { display: flex; gap: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: rgba(12, 13, 19, 0.9); transition: border-color 0.2s; }
+    .card { position: relative; display: flex; gap: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: rgba(12, 13, 19, 0.9); transition: border-color 0.2s; }
     .card:hover { border-color: var(--line-strong); }
     .poster { flex: 0 0 100px; height: 150px; border-radius: 8px; background: #1a1b24 center/cover no-repeat; display: block; }
     .info { min-width: 0; display: flex; flex-direction: column; }
@@ -155,6 +156,69 @@
     .shuffle-tile strong { font-family: var(--serif); font-size: 1.45rem; font-weight: 600; color: var(--text); }
     .shuffle-tile span { font-size: 0.82rem; color: var(--muted); max-width: 240px; line-height: 1.45; }
     .checking { font-size: 0.75rem; color: var(--faint); }
+
+    /* ---------- Saving: hearts, the picker, My bubbles ---------- */
+    .save-btn { position: absolute; top: 10px; right: 10px; width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%;
+                border: 1px solid var(--line); background: rgba(5, 6, 10, 0.7); color: var(--muted); cursor: pointer; transition: all 0.2s; }
+    .save-btn:hover { color: var(--gold); border-color: var(--gold-soft); }
+    .save-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+    .save-btn svg { width: 18px; height: 18px; }
+    .save-btn.saved { color: var(--gold); border-color: var(--gold); background: rgba(217, 196, 155, 0.12); }
+    .save-btn.saved svg path { fill: currentColor; }
+    .card h3 { padding-right: 40px; }
+
+    .lib-toggle { position: fixed; top: 14px; right: 16px; z-index: 5; display: inline-flex; align-items: center; gap: 8px; padding: 9px 15px;
+                  border-radius: 999px; border: 1px solid var(--line-strong); background: rgba(5, 6, 10, 0.75); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+                  color: var(--gold); font: inherit; font-size: 0.82rem; font-weight: 600; letter-spacing: 0.04em; cursor: pointer; }
+    .lib-toggle:hover { border-color: var(--gold); }
+    .lib-toggle:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+    .lib-toggle svg { width: 15px; height: 15px; }
+    .lib-toggle .count { min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--gold); color: #120f0a; font-size: 0.72rem; text-align: center; }
+
+    .library { max-width: 1180px; margin: 0 auto; }
+    .library[hidden] { display: none; }
+    .lib-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 8px 0 22px; }
+    .lib-head h2 { font-family: var(--serif); font-weight: 600; font-size: clamp(1.8rem, 5vw, 2.6rem); }
+    .lib-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .text-btn { background: none; border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; color: var(--muted); font: inherit; font-size: 0.82rem; cursor: pointer; }
+    .text-btn:hover { color: var(--text); border-color: var(--line-strong); }
+    .text-btn.danger:hover { color: var(--error); border-color: var(--error); }
+    .text-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+    .folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px; }
+    .folder { text-align: left; border: 1px solid var(--line); border-radius: 16px; background: rgba(12, 13, 19, 0.9); padding: 12px; cursor: pointer; color: var(--text); font: inherit; transition: border-color 0.2s; }
+    .folder:hover { border-color: var(--gold-soft); }
+    .folder:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+    .mosaic { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: #12131a; }
+    .mosaic span { background: #1a1b24 center/cover no-repeat; }
+    .folder strong { display: block; margin-top: 12px; font-family: var(--serif); font-size: 1.35rem; font-weight: 600; line-height: 1.15; }
+    .folder small { color: var(--muted); font-size: 0.8rem; }
+    .empty { text-align: center; color: var(--muted); padding: 50px 20px; line-height: 1.6; }
+    .empty strong { display: block; font-family: var(--serif); font-size: 1.6rem; color: var(--text); margin-bottom: 6px; }
+
+    dialog.picker { margin: auto; width: min(420px, calc(100vw - 32px)); padding: 24px; border: 1px solid var(--line-strong); border-radius: 20px;
+                    background: #0d0e15; color: var(--text); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7); }
+    dialog.picker::backdrop { background: rgba(2, 3, 6, 0.7); backdrop-filter: blur(3px); }
+    .picker h3 { font-family: var(--serif); font-size: 1.6rem; font-weight: 600; }
+    .picker .sub-title { color: var(--muted); font-size: 0.86rem; margin: 2px 0 16px; }
+    .pick-list { display: flex; flex-direction: column; gap: 8px; max-height: 45vh; overflow-y: auto; }
+    .pick-row { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
+    .pick-row:hover { border-color: var(--line-strong); }
+    .pick-row input { width: 18px; height: 18px; accent-color: #d9c49b; }
+    .pick-row small { margin-left: auto; color: var(--faint); }
+    /* A form inside the picker, not the search panel. */
+    .new-folder { display: flex; gap: 8px; max-width: none; margin: 14px 0 0; padding: 0; border: none; border-radius: 0; background: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+    .new-folder input { flex: 1; min-width: 0; background: var(--well); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: inherit; font-size: 0.95rem; }
+    .new-folder input:focus { outline: none; border-color: var(--gold); }
+    .picker-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; }
+    .gold-btn { padding: 10px 20px; border: none; border-radius: 999px; background: linear-gradient(180deg, #ecdcb6, #c7ae7c); color: #15110a; font: inherit; font-weight: 600; font-size: 0.86rem; cursor: pointer; }
+    .gold-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+    .toast { position: fixed; left: 50%; bottom: 22px; z-index: 10; transform: translate(-50%, 140%); display: flex; align-items: center; gap: 14px;
+             width: max-content; max-width: calc(100vw - 32px); padding: 12px 16px 12px 18px; border: 1px solid var(--line-strong); border-radius: 14px;
+             background: rgba(13, 14, 21, 0.96); color: var(--text); font-size: 0.9rem; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6); transition: transform 0.25s; }
+    .toast.show { transform: translate(-50%, 0); }
+    .toast button { background: none; border: none; color: var(--gold); font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
 
     /* Two of us */
     .partner-toggle { display: block; margin: 14px auto 0; background: none; border: none; color: var(--gold); font: inherit; font-size: 0.9rem; cursor: pointer; padding: 6px 10px; border-radius: 8px; }
@@ -196,7 +260,7 @@
       textarea { min-height: 64px; }
     }
     @media (max-width: 560px) {
-      header { padding: 40px 0 28px; }
+      header { padding: 72px 0 28px; } /* room for the My bubbles button */
       .sub { font-size: 0.7rem; letter-spacing: 0.24em; padding-left: 0.24em; /* balances the trailing letter-space */ }
       form { padding: 22px 18px 24px; border-radius: 18px; }
       .row { grid-template-columns: 1fr; }
@@ -209,6 +273,7 @@
 </head>
 <body>
   <canvas id="sky" aria-hidden="true"></canvas>
+  <button type="button" class="lib-toggle" id="libToggle"></button>
 
   <div class="wrap">
     <header>
@@ -332,7 +397,23 @@
     <p class="status" id="status" role="status"></p>
     <p class="read" id="read"></p>
     <section class="results" id="results" aria-live="polite"></section>
+    <section class="library" id="library" hidden aria-live="polite"></section>
   </div>
+
+  <dialog class="picker" id="picker" aria-labelledby="pickerTitle">
+    <h3 id="pickerTitle">Save to…</h3>
+    <p class="sub-title" id="pickerFor"></p>
+    <div class="pick-list" id="pickList"></div>
+    <form class="new-folder" id="newFolder">
+      <input id="newFolderName" maxlength="40" placeholder="New folder name" aria-label="New folder name" />
+      <button class="text-btn" type="submit">Add</button>
+    </form>
+    <div class="picker-foot">
+      <button type="button" class="text-btn danger" id="pickerRemove">Remove from saved</button>
+      <button type="button" class="gold-btn" id="pickerDone">Done</button>
+    </div>
+  </dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <footer>
     Movie data and posters from <a href="https://www.themoviedb.org" target="_blank" rel="noopener">TMDB</a>.
@@ -580,6 +661,7 @@
         }
         setStatus('');
         $('read').textContent = data.profile?.summary ? `“${data.profile.summary}”` : '';
+        suggestedFolder = folderNameFor(data.profile, body);
         reserve = data.reserve || [];
         show(data.results);
       } catch (err) {
@@ -706,6 +788,17 @@
     const SHARE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v13M7 8l5-5 5 5M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></svg>';
     const forTwo = () => !!lastBody?.partner;
 
+    const HEART = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>';
+
+    function saveButton(m) {
+      const b = el('button', { type: 'button', className: 'save-btn' });
+      b.innerHTML = HEART;
+      b.dataset.save = m.key;
+      syncHeart(b, m.key, m.title);
+      b.onclick = () => onSave(m);
+      return b;
+    }
+
     function card(m, top = false) {
       const poster = el('a', { className: 'poster', href: m.url, target: '_blank', rel: 'noopener', ariaLabel: m.title });
       if (m.poster) poster.style.backgroundImage = `url("${m.poster}")`;
@@ -727,9 +820,208 @@
           top && m.overview ? el('p', { className: 'overview', textContent: m.overview.length > 240 ? m.overview.slice(0, 237).trimEnd() + '…' : m.overview }) : null,
           watchRow({ ...m, streaming: m.streaming === undefined ? [] : m.streaming })));
       if (share) article.querySelector('.watch').prepend(share);
-      if (m.key) article.dataset.key = m.key;
+      if (m.key) { article.dataset.key = m.key; article.append(saveButton(m)); }
       return article;
     }
+
+    // ---------- Saved picks: folders kept in this browser ----------
+    // { folders: [{ id, name, keys: [...] }], items: { key: savedPick } }
+    let lib = store.get('library', { folders: [], items: {} });
+    if (!Array.isArray(lib.folders) || typeof lib.items !== 'object') lib = { folders: [], items: {} };
+    let suggestedFolder = 'Saved picks';
+    let pickerItem = null, openFolderId = null;
+
+    const saveLib = () => { store.set('library', lib); updateLibToggle(); };
+    const isSaved = (key) => lib.folders.some((f) => f.keys.includes(key));
+    const findFolder = (name) => lib.folders.find((f) => f.name.toLowerCase() === name.trim().toLowerCase());
+    const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+    function folderNameFor(profile, body) {
+      if (profile?.folder_name?.trim()) return profile.folder_name.trim().slice(0, 40);
+      // Older backends don't name folders: fall back to the start of what was typed.
+      const words = (body.vibe || body.music || body.plot || '').trim().split(/\s+/).slice(0, 4).join(' ');
+      return words ? words.replace(/[.,;:!?]+$/, '').replace(/^./, (c) => c.toUpperCase()) : 'Saved picks';
+    }
+
+    function ensureFolder(name) {
+      let f = findFolder(name);
+      if (!f) { f = { id: newId(), name: name.trim().slice(0, 40), keys: [] }; lib.folders.unshift(f); }
+      return f;
+    }
+
+    // Keep what a saved card needs, so it still shows without searching again.
+    function rememberItem(m) {
+      const { key, id, kind, title, year, rating, poster, reason, url, watchUrl } = m;
+      lib.items[key] = { key, id, kind, title, year, rating, poster, reason, url, watchUrl, streaming: m.streaming || [], savedAt: Date.now() };
+    }
+
+    function setMember(folder, m, on) {
+      folder.keys = folder.keys.filter((k) => k !== m.key);
+      if (on) { folder.keys.unshift(m.key); rememberItem(m); }
+      if (!isSaved(m.key)) delete lib.items[m.key];
+    }
+
+    function syncHeart(b, key, title) {
+      const saved = isSaved(key);
+      b.classList.toggle('saved', saved);
+      b.setAttribute('aria-pressed', saved);
+      b.setAttribute('aria-label', saved ? `Saved: change folders for ${title}` : `Save ${title}`);
+    }
+    const syncHearts = () => document.querySelectorAll('[data-save]').forEach((b) => {
+      const item = lib.items[b.dataset.save];
+      syncHeart(b, b.dataset.save, item?.title || b.closest('.card')?.querySelector('h3')?.textContent || '');
+    });
+
+    // One tap saves into the folder named after this search; tapping again opens the picker.
+    function onSave(m) {
+      if (isSaved(m.key)) return openPicker(m);
+      const f = ensureFolder(suggestedFolder);
+      setMember(f, m, true);
+      saveLib(); syncHearts();
+      toast(`Saved to “${f.name}”`, 'Change', () => openPicker(m));
+    }
+
+    function openPicker(m) {
+      pickerItem = m;
+      $('pickerFor').textContent = m.title;
+      renderPicker();
+      $('newFolderName').value = '';
+      $('picker').showModal();
+    }
+
+    function renderPicker() {
+      const list = $('pickList');
+      list.innerHTML = '';
+      // Offer this search's folder name even before it exists.
+      const names = lib.folders.map((f) => f.name);
+      if (lastBody && !findFolder(suggestedFolder)) names.unshift(suggestedFolder);
+      for (const name of names) {
+        const f = findFolder(name);
+        const box = el('input', { type: 'checkbox', checked: !!f && f.keys.includes(pickerItem.key) });
+        box.onchange = () => {
+          setMember(ensureFolder(name), pickerItem, box.checked);
+          saveLib(); syncHearts(); renderPicker(); refreshLibrary();
+        };
+        list.append(el('label', { className: 'pick-row' }, box, el('span', { textContent: name }),
+          el('small', { textContent: f ? `${f.keys.length}` : 'new' })));
+      }
+      $('pickerRemove').hidden = !isSaved(pickerItem.key);
+    }
+
+    $('newFolder').onsubmit = (e) => {
+      e.preventDefault();
+      const name = $('newFolderName').value.trim();
+      if (!name) return;
+      setMember(ensureFolder(name), pickerItem, true);
+      $('newFolderName').value = '';
+      saveLib(); syncHearts(); renderPicker(); refreshLibrary();
+    };
+    $('pickerRemove').onclick = () => {
+      lib.folders.forEach((f) => setMember(f, pickerItem, false));
+      saveLib(); syncHearts(); refreshLibrary();
+      $('picker').close();
+      toast(`Removed ${pickerItem.title}`);
+    };
+    $('pickerDone').onclick = () => $('picker').close();
+
+    let toastTimer;
+    function toast(text, action, onAction) {
+      const t = $('toast');
+      t.innerHTML = '';
+      t.append(el('span', { textContent: text }));
+      if (action) {
+        const b = el('button', { type: 'button', textContent: action });
+        b.onclick = () => { t.classList.remove('show'); onAction(); };
+        t.append(b);
+      }
+      t.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => t.classList.remove('show'), 4500);
+    }
+
+    // ---------- My bubbles: the library view ----------
+    const savedCount = () => Object.keys(lib.items).length;
+
+    function updateLibToggle() {
+      const open = !$('library').hidden;
+      const b = $('libToggle');
+      b.innerHTML = open ? '' : HEART;
+      b.append(open ? '← Back to search' : 'My bubbles');
+      if (!open && savedCount()) b.append(el('span', { className: 'count', textContent: String(savedCount()) }));
+    }
+
+    function setLibrary(open) {
+      $('library').hidden = !open;
+      for (const id of ['form', 'status', 'read', 'results']) $(id).hidden = open;
+      openFolderId = null;
+      if (open) refreshLibrary();
+      updateLibToggle();
+      window.scrollTo({ top: open ? $('library').offsetTop - 80 : 0 });
+    }
+    $('libToggle').onclick = () => setLibrary($('library').hidden);
+
+    function refreshLibrary() {
+      if ($('library').hidden) return;
+      const box = $('library');
+      box.innerHTML = '';
+      const folder = lib.folders.find((f) => f.id === openFolderId);
+      if (folder) return renderFolder(box, folder);
+      openFolderId = null;
+      box.append(el('div', { className: 'lib-head' }, el('h2', { textContent: 'My bubbles' })));
+      const folders = lib.folders.filter((f) => f.keys.length);
+      if (!folders.length) {
+        box.append(el('div', { className: 'empty' }, el('strong', { textContent: 'Nothing saved yet' }),
+          'Tap the ♡ on any pick to save it. We\'ll file it in a folder named after your search.'));
+        return;
+      }
+      const grid = el('div', { className: 'folders' });
+      for (const f of folders) {
+        const mosaic = el('div', { className: 'mosaic' });
+        for (let i = 0; i < 4; i++) {
+          const tile = el('span');
+          const poster = lib.items[f.keys[i]]?.poster;
+          if (poster) tile.style.backgroundImage = `url("${poster}")`;
+          mosaic.append(tile);
+        }
+        const b = el('button', { type: 'button', className: 'folder' }, mosaic, el('strong', { textContent: f.name }),
+          el('small', { textContent: `${f.keys.length} ${f.keys.length === 1 ? 'pick' : 'picks'}` }));
+        b.onclick = () => { openFolderId = f.id; refreshLibrary(); window.scrollTo({ top: $('library').offsetTop - 80 }); };
+        grid.append(b);
+      }
+      box.append(grid);
+    }
+
+    function renderFolder(box, f) {
+      const back = el('button', { type: 'button', className: 'text-btn', textContent: '← All folders' });
+      back.onclick = () => { openFolderId = null; refreshLibrary(); };
+      const rename = el('button', { type: 'button', className: 'text-btn', textContent: 'Rename' });
+      rename.onclick = () => {
+        const name = prompt('Rename folder', f.name)?.trim();
+        if (!name || name === f.name) return;
+        const other = findFolder(name);
+        if (other && other !== f) {
+          // Renaming onto an existing folder merges the two.
+          other.keys = [...new Set([...other.keys, ...f.keys])];
+          lib.folders = lib.folders.filter((x) => x !== f);
+          openFolderId = other.id;
+        } else f.name = name.slice(0, 40);
+        saveLib(); refreshLibrary();
+      };
+      const del = el('button', { type: 'button', className: 'text-btn danger', textContent: 'Delete folder' });
+      del.onclick = () => {
+        if (!confirm(`Delete “${f.name}”? Picks saved only here will be removed.`)) return;
+        lib.folders = lib.folders.filter((x) => x !== f);
+        for (const k of f.keys) if (!isSaved(k)) delete lib.items[k];
+        openFolderId = null;
+        saveLib(); syncHearts(); refreshLibrary();
+      };
+      box.append(back, el('div', { className: 'lib-head' }, el('h2', { textContent: f.name }), el('div', { className: 'lib-actions' }, rename, del)));
+      const grid = el('div', { className: 'results' });
+      for (const k of f.keys) if (lib.items[k]) grid.append(card(lib.items[k]));
+      box.append(grid);
+    }
+
+    updateLibToggle();
 
     // ---------- Share card: a story-sized image of the pick ----------
     async function sharePick(m, btn) {

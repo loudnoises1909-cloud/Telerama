@@ -63,6 +63,7 @@ function partnerText(p: { vibe?: string; music?: string }): string {
 
 const ProfileSchema = z.object({
   summary: z.string().describe("One evocative sentence describing the viewing mood the user is after."),
+  folder_name: z.string().describe("A 2-4 word, title-case name for a folder of picks like these, evocative rather than literal, e.g. 'Florida Noir', 'Rainy Sunday Chills', 'Badalamenti Nights'."),
   must_match: z
     .array(z.string())
     .describe("Hard requirements the user stated or clearly implied, phrased as checkable facts: 'set in Florida', 'a heist plot', 'not an Indian film'. Moods and tones ('sunshine', 'cosy') are not requirements. Empty if there are none."),
