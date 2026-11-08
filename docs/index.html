@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Telerama</title>
-  <meta name="description" content="Pictures for the night: movie picks from a vibe, a song, a plot, an era or a photo of your room." />
+  <meta name="description" content="Pictures for the night: film and series picks from a vibe, a song, a plot, an era or a photo of your room." />
   <meta name="theme-color" content="#06070c" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -52,6 +52,15 @@
       border: 1px solid var(--line); border-radius: 22px; background: var(--panel);
       backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     }
+    .kinds { display: flex; justify-content: center; margin-bottom: 18px; }
+    .seg { display: inline-flex; padding: 4px; gap: 4px; border: 1px solid var(--line); border-radius: 999px; background: var(--well); }
+    .seg button { border: none; background: transparent; color: var(--muted); font: inherit; font-size: 0.86rem; letter-spacing: 0.06em;
+                  padding: 8px 20px; border-radius: 999px; cursor: pointer; transition: all 0.2s; }
+    .seg button:hover { color: var(--text); }
+    .seg button[aria-checked=true] { background: var(--gold); color: #120f0a; font-weight: 600; }
+    .seg button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+    .kind-tag { display: inline-block; margin-left: 8px; padding: 1px 7px; border: 1px solid var(--line-strong); border-radius: 4px;
+                font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); vertical-align: 1px; }
     .lede { text-align: center; color: var(--muted); font-size: 0.98rem; line-height: 1.5; margin-bottom: 22px; }
     .lede strong { color: var(--text); font-weight: 600; }
     .starts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
@@ -161,6 +170,13 @@
     </header>
 
     <form id="form">
+      <div class="kinds">
+        <div class="seg" role="radiogroup" aria-label="What to watch" id="kinds">
+          <button type="button" role="radio" data-kinds="movie">Films</button>
+          <button type="button" role="radio" data-kinds="tv">Series</button>
+          <button type="button" role="radio" data-kinds="movie,tv">Both</button>
+        </div>
+      </div>
       <p class="lede"><strong>Start anywhere: a vibe, a song, or a plot.</strong> One is enough; mixing sharpens it.</p>
 
       <div class="starts">
@@ -317,6 +333,22 @@
       $('eras').appendChild(b);
     });
 
+    // ---------- Films, series or both ----------
+    const kindButtons = [...$('kinds').querySelectorAll('button')];
+    let kinds = store.get('kinds', 'movie,tv');
+    if (!kindButtons.some((b) => b.dataset.kinds === kinds)) kinds = 'movie,tv';
+    const syncKinds = () => kindButtons.forEach((b) => b.setAttribute('aria-checked', b.dataset.kinds === kinds));
+    kindButtons.forEach((b) => (b.onclick = () => { kinds = b.dataset.kinds; store.set('kinds', kinds); syncKinds(); }));
+    // Arrow keys move between the options, as in any radio group.
+    $('kinds').addEventListener('keydown', (e) => {
+      const i = kindButtons.findIndex((b) => b.dataset.kinds === kinds);
+      const next = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : null;
+      if (next === null) return;
+      const b = kindButtons[(next + kindButtons.length) % kindButtons.length];
+      b.click(); b.focus(); e.preventDefault();
+    });
+    syncKinds();
+
     // ---------- Starting points: show which ones are filled ----------
     ['vibe', 'music', 'plot'].forEach((id) => {
       const el = $(id);
@@ -377,6 +409,7 @@
         music: $('music').value,
         plot: $('plot').value,
         eras: [...eras],
+        kinds: kinds.split(','),
         region: $('region').value,
         image: image ? { media_type: image.media_type, data: image.data } : undefined,
       };
@@ -440,7 +473,8 @@
           poster,
           el('div', { className: 'info' },
             el('h3', {}, el('a', { href: m.url, target: '_blank', rel: 'noopener', textContent: m.title })),
-            el('div', { className: 'meta', textContent: [m.year, m.rating ? `★ ${m.rating}` : null].filter(Boolean).join(' · ') }),
+            el('div', { className: 'meta', textContent: [m.year, m.rating ? `★ ${m.rating}` : null].filter(Boolean).join(' · ') },
+              m.kind === 'tv' ? el('span', { className: 'kind-tag', textContent: 'Series' }) : null),
             el('p', { className: 'reason', textContent: m.reason }),
             watch)));
       }
