@@ -184,14 +184,34 @@
     .text-btn:hover { color: var(--text); border-color: var(--line-strong); }
     .text-btn.danger:hover { color: var(--error); border-color: var(--error); }
     .text-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-    .folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px; }
-    .folder { text-align: left; border: 1px solid var(--line); border-radius: 16px; background: rgba(12, 13, 19, 0.9); padding: 12px; cursor: pointer; color: var(--text); font: inherit; transition: border-color 0.2s; }
-    .folder:hover { border-color: var(--gold-soft); }
-    .folder:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-    .mosaic { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: #12131a; }
-    .mosaic span { background: #1a1b24 center/cover no-repeat; }
-    .folder strong { display: block; margin-top: 12px; font-family: var(--serif); font-size: 1.35rem; font-weight: 600; line-height: 1.15; }
-    .folder small { color: var(--muted); font-size: 0.8rem; }
+    /* Folders are bubbles: their posters inside a glass sphere, like the logo. */
+    .folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 28px 18px; padding-top: 6px; }
+    .folder { display: flex; flex-direction: column; align-items: center; text-align: center; background: none; border: none; padding: 6px;
+              cursor: pointer; color: var(--text); font: inherit; border-radius: 16px; animation: float 7s ease-in-out infinite; }
+    .folder:nth-child(3n+2) { animation-delay: -2.3s; }
+    .folder:nth-child(3n) { animation-delay: -4.6s; }
+    .folder:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; }
+    @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+    .bubble { position: relative; width: min(100%, 190px); aspect-ratio: 1; border-radius: 50%; overflow: hidden; display: grid; gap: 3px;
+              background: #10121c; box-shadow: 0 0 46px rgba(217, 196, 155, 0.12), 0 18px 40px rgba(0, 0, 0, 0.5); transition: transform 0.3s, box-shadow 0.3s; }
+    .bubble.n1 { grid-template-columns: 1fr; }
+    .bubble.n2 { grid-template-columns: 1fr 1fr; }
+    .bubble.n3, .bubble.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+    .bubble.n3 span:first-child { grid-row: span 2; }
+    .bubble span { background: #1a1b24 center/cover no-repeat; }
+    /* Glass: a soft shine at the top left and a darker, golden edge. */
+    .bubble::after { content: ''; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+                     background: radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.08) 16%, rgba(255, 255, 255, 0) 30%),
+                                 radial-gradient(circle, rgba(5, 6, 10, 0) 55%, rgba(5, 6, 10, 0.35) 80%, rgba(243, 226, 187, 0.35) 100%); }
+    /* Iridescent rim, as on the logo. */
+    .bubble::before { content: ''; position: absolute; inset: 0; z-index: 1; border-radius: 50%; pointer-events: none;
+                      background: conic-gradient(from 210deg, #b9d4ff, #f3e2bb, #f7b8d2, #d9c49b, #b9d4ff);
+                      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+                      mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px)); opacity: 0.85; }
+    .folder:hover .bubble { transform: scale(1.04); box-shadow: 0 0 60px rgba(217, 196, 155, 0.22), 0 18px 40px rgba(0, 0, 0, 0.5); }
+    .folder strong { display: block; margin-top: 16px; font-family: var(--serif); font-size: 1.35rem; font-weight: 600; line-height: 1.15; }
+    .folder small { color: var(--muted); font-size: 0.8rem; margin-top: 2px; }
+    @media (prefers-reduced-motion: reduce) { .folder { animation: none; } .bubble { transition: none; } }
     .empty { text-align: center; color: var(--muted); padding: 50px 20px; line-height: 1.6; }
     .empty strong { display: block; font-family: var(--serif); font-size: 1.6rem; color: var(--text); margin-bottom: 6px; }
 
@@ -976,10 +996,11 @@
       }
       const grid = el('div', { className: 'folders' });
       for (const f of folders) {
-        const mosaic = el('div', { className: 'mosaic' });
-        for (let i = 0; i < 4; i++) {
+        // Up to four posters fill the bubble: one fills it, two split it, three or four tile it.
+        const posters = f.keys.map((k) => lib.items[k]?.poster).filter(Boolean).slice(0, 4);
+        const mosaic = el('div', { className: `bubble n${Math.max(1, posters.length)}` });
+        for (const poster of posters.length ? posters : [null]) {
           const tile = el('span');
-          const poster = lib.items[f.keys[i]]?.poster;
           if (poster) tile.style.backgroundImage = `url("${poster}")`;
           mosaic.append(tile);
         }
