@@ -57,6 +57,9 @@ interface RecommendRequest {
 
 const ProfileSchema = z.object({
   summary: z.string().describe("One evocative sentence describing the viewing mood the user is after."),
+  must_match: z
+    .array(z.string())
+    .describe("Hard requirements the user stated or clearly implied, phrased as checkable facts: 'set in Florida', 'a heist plot', 'not an Indian film'. Moods and tones ('sunshine', 'cosy') are not requirements. Empty if there are none."),
   genres: z.array(z.enum(GENRE_NAMES)).describe("1-3 TMDB genres that best fit."),
   keywords: z.array(z.string()).describe("3-6 short TMDB-style keywords, e.g. 'heist', 'road trip', 'small town', 'neo-noir'."),
   year_from: z.number().int().nullable().describe("Earliest release year, or null for no limit."),
@@ -73,6 +76,7 @@ Translate that into a search profile for a movie and TV database.
 - Photos: read the palette, decor, era cues, lighting, and atmosphere; treat it as the setting the user wants to feel.
 - Eras: if the user picked decades, draw reference titles from those decades (spread across them if there are several). year_from/year_to are only used when no decades are picked: then use null unless the input clearly implies a period.
 - Reference titles must be real films or series you are confident exist, and only of the kinds the user wants. Start with the titles a knowledgeable friend would name first (a show literally set where and how the user describes), then less obvious ones.
+- Requirements: every reference title must meet every item in must_match (e.g. actually be set in the place named).
 - Keywords: put the most specific first (a place, a profession, a setting), as each one is searched on its own.`;
 
 async function buildProfile(client: Anthropic, req: RecommendRequest): Promise<Profile> {
@@ -262,6 +266,8 @@ const PicksSchema = z.object({
   picks: z.array(
     z.object({
       id: z.string().describe("The id in square brackets from the candidate list, e.g. movie-123."),
+      check: z.string().describe("Before anything else: how this title meets each requirement, from what you know of it, e.g. 'Set in Miami, Florida'. Write 'none' if there are no requirements."),
+      meets_requirements: z.boolean().describe("True only if you are confident it meets every requirement."),
       reason: z.string().describe("One sentence, under 25 words, on why it fits this specific request."),
     }),
   ),
@@ -278,12 +284,13 @@ async function rankCandidates(client: Anthropic, req: RecommendRequest, profile:
 
   const response = await client.messages.parse({
     model: MODEL,
-    max_tokens: 3000,
-    system: `You are a film and TV curator picking what someone should watch tonight. Choose only from the candidate list, by id. When both films and series are wanted, mix them unless the user's words lean one way. Honour anything the user rules out, such as a country or language (each candidate's original language is given as an ISO code). Prefer a varied set (not all the same director or decade unless asked). Write reasons that speak to the user's own words.`,
+    max_tokens: 4000,
+    system: `You are a film and TV curator picking what someone should watch tonight. Choose only from the candidate list, by id. When both films and series are wanted, mix them unless the user's words lean one way. Honour anything the user rules out, such as a country or language (each candidate's original language is given as an ISO code). Prefer a varied set (not all the same director or decade unless asked). Write reasons that speak to the user's own words.
+Requirements are firm. Use your own knowledge of each title, not just the short summary given: a show about murders that is set in Philadelphia does not fit "set in Florida". Leave out anything you are not confident meets every requirement. A shorter list of accurate picks is far better than a full list with a wrong one.`,
     messages: [
       {
         role: "user",
-        content: `What they asked for:\n${ask}\n\nYour read of it: ${profile.summary}\n\nCandidates:\n${list}\n\nRank the best ${Math.min(MAX_PICKS, candidates.length)}, best first. The first ${SHOWN_PICKS} are shown together, so make them a strong, varied set on their own.`,
+        content: `What they asked for:\n${ask}\n\nYour read of it: ${profile.summary}\nRequirements: ${profile.must_match.length ? profile.must_match.join("; ") : "none"}\n\nCandidates:\n${list}\n\nRank up to ${Math.min(MAX_PICKS, candidates.length)} that meet the requirements, best first. The first ${SHOWN_PICKS} are shown together, so make them a strong, varied set on their own.`,
       },
     ],
     output_config: { format: zodOutputFormat(PicksSchema) },
@@ -293,6 +300,7 @@ async function rankCandidates(client: Anthropic, req: RecommendRequest, profile:
   const byKey = new Map(candidates.map((c) => [c.key, c]));
   // Drop any id the model didn't actually get from us.
   return response.parsed_output.picks
+    .filter((p) => p.meets_requirements) // the model flagged its own misfit
     .map((p) => ({ item: byKey.get(p.id.replace(/^\[|\]$/g, "")), reason: p.reason }))
     .filter((p): p is { item: Candidate; reason: string } => !!p.item)
     .slice(0, MAX_PICKS);
