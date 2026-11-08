@@ -135,18 +135,18 @@
     .where { font-size: 0.75rem; color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; }
     .where:hover { color: var(--gold); border-color: var(--gold-soft); }
 
-    .more { display: none; flex-direction: column; align-items: center; gap: 10px; margin: 30px auto 0; }
-    .more.show { display: flex; }
-    .shuffle {
-      display: inline-flex; align-items: center; gap: 10px; padding: 13px 26px; border-radius: 999px; cursor: pointer;
-      border: 1px solid var(--line-strong); background: rgba(12, 13, 19, 0.9); color: var(--gold);
-      font: inherit; font-size: 0.86rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; transition: all 0.2s;
+    .shuffle-tile {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 182px; padding: 20px;
+      border: 1px dashed var(--line-strong); border-radius: 16px; background: rgba(217, 196, 155, 0.04);
+      color: var(--gold); font: inherit; text-align: center; cursor: pointer; transition: all 0.2s;
     }
-    .shuffle:hover { border-color: var(--gold); background: rgba(217, 196, 155, 0.08); }
-    .shuffle:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-    .shuffle:disabled { opacity: 0.55; cursor: wait; }
-    .shuffle svg { width: 16px; height: 16px; }
-    .more-note { font-size: 0.78rem; color: var(--faint); }
+    .shuffle-tile:hover { border-style: solid; border-color: var(--gold); background: rgba(217, 196, 155, 0.08); }
+    .shuffle-tile:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+    .shuffle-tile:disabled { cursor: wait; opacity: 0.7; }
+    .shuffle-tile.done { cursor: default; border-style: dashed; background: transparent; }
+    .shuffle-tile svg { width: 26px; height: 26px; }
+    .shuffle-tile strong { font-family: var(--serif); font-size: 1.45rem; font-weight: 600; color: var(--text); }
+    .shuffle-tile span { font-size: 0.82rem; color: var(--muted); max-width: 240px; line-height: 1.45; }
     .checking { font-size: 0.75rem; color: var(--faint); }
 
     footer { position: relative; z-index: 1; max-width: 760px; margin: 56px auto 0; text-align: center; color: var(--faint); font-size: 0.72rem; line-height: 1.7; }
@@ -251,14 +251,6 @@
     <p class="status" id="status" role="status"></p>
     <p class="read" id="read"></p>
     <section class="results" id="results" aria-live="polite"></section>
-    <div class="more" id="more">
-      <button type="button" class="shuffle" id="shuffle">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /></svg>
-        Shuffle
-      </button>
-      <span class="more-note" id="moreNote">10 different picks for the same request</span>
-    </div>
   </div>
 
   <footer>
@@ -437,16 +429,15 @@
     let lastBody = null, reserve = [], shown = [];
 
     async function search(body, { shuffling = false } = {}) {
-      $('submit').disabled = true;
-      $('shuffle').disabled = true;
-      if (!shuffling) { $('read').textContent = ''; $('results').innerHTML = ''; $('more').classList.remove('show'); }
+      setBusy(true, shuffling);
+      if (!shuffling) { $('read').textContent = ''; $('results').innerHTML = ''; }
       let i = 0;
       setStatus(shuffling ? 'Finding 10 different picks…' : LOADING[0]);
       const ticker = setInterval(() => setStatus(LOADING[++i % LOADING.length]), 2500);
       try {
         const data = await api('/api/recommend', shuffling ? { ...body, exclude: shown } : body);
         if (!data.results?.length) {
-          if (shuffling) { setStatus('That\'s every strong match for this search. Try tweaking the vibe or era.'); $('more').classList.remove('show'); }
+          if (shuffling) { setStatus(''); tileDone(); }
           else setStatus('Nothing matched that one. Try another era, or loosen the vibe.', true);
           return;
         }
@@ -458,8 +449,7 @@
         setStatus(errorText(err), true);
       } finally {
         clearInterval(ticker);
-        $('submit').disabled = false;
-        $('shuffle').disabled = false;
+        setBusy(false);
       }
     }
 
@@ -484,7 +474,7 @@
       search(body);
     };
 
-    $('shuffle').onclick = () => {
+    function onShuffle() {
       if (!lastBody) return;
       if (reserve.length) {
         // Already ranked: show them straight away, then fill in where to watch.
@@ -494,14 +484,41 @@
       } else {
         search(lastBody, { shuffling: true });
       }
-    };
+    }
+
+    const SHUFFLE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>';
+
+    // The last tile in the grid, right after the final pick.
+    function shuffleTile() {
+      const b = el('button', { type: 'button', className: 'shuffle-tile', id: 'shuffle' });
+      b.innerHTML = SHUFFLE_ICON;
+      b.append(el('strong', { textContent: 'Not quite it?' }),
+        el('span', { textContent: reserve.length ? 'Shuffle for 10 different picks' : 'Shuffle to search again, skipping these' }));
+      b.onclick = onShuffle;
+      return b;
+    }
+
+    function tileDone() {
+      const b = $('shuffle');
+      if (!b) return;
+      b.className = 'shuffle-tile done'; b.disabled = true; b.onclick = null;
+      b.innerHTML = '';
+      b.append(el('strong', { textContent: 'That\'s every strong match' }), el('span', { textContent: 'Try tweaking the vibe or picking another era.' }));
+    }
+
+    function setBusy(busy, shuffling = false) {
+      $('submit').disabled = busy;
+      const b = $('shuffle');
+      if (!b || b.classList.contains('done')) return;
+      b.disabled = busy;
+      if (busy && shuffling) b.querySelector('span').textContent = 'Shuffling…';
+    }
 
     function show(items) {
       shown.push(...items.map((m) => m.key).filter(Boolean));
       $('results').innerHTML = '';
       for (const m of items) $('results').append(card(m));
-      $('more').classList.add('show');
-      $('moreNote').textContent = reserve.length ? '10 different picks for the same request' : 'Searches again, skipping everything you\'ve seen';
+      $('results').append(shuffleTile());
       const top = $('read').textContent ? $('read') : $('results');
       if (top.getBoundingClientRect().top < 0) top.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
