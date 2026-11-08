@@ -1,11 +1,19 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
+import { DAILY_PER_PERSON, DAILY_TOTAL, Limits } from "./limits";
+
+// The class must be exported from the main module for Cloudflare to run it.
+export { Limits };
 
 interface Env {
   ANTHROPIC_API_KEY: string;
   TMDB_TOKEN: string;
   ALLOWED_ORIGINS: string;
+  SEARCH_BURST: RateLimit; // 5 searches a minute per person (wrangler.toml)
+  LIMITS: DurableObjectNamespace<Limits>; // daily caps
+  DAILY_SEARCHES_PER_PERSON?: string;
+  DAILY_SEARCHES_TOTAL?: string;
 }
 
 // Haiku keeps each recommendation at roughly half a cent.
@@ -421,6 +429,28 @@ async function posterProxy(route: string, cors: Record<string, string>): Promise
   });
 }
 
+// ---------- Rate limits ----------
+
+// Returns the message to show when this search is over a limit, or null if it may go ahead.
+async function checkLimits(request: Request, env: Env): Promise<string | null> {
+  const who = request.headers.get("CF-Connecting-IP") ?? "unknown";
+  // Missing bindings (e.g. an old deploy) shouldn't take the site down: skip that check.
+  if (env.SEARCH_BURST && !(await env.SEARCH_BURST.limit({ key: who })).success) {
+    return "Easy there, projectionist. That's a lot of shuffling: give it a minute and try again.";
+  }
+  if (env.LIMITS) {
+    const setting = (v: string | undefined, fallback: number) => (Number(v) > 0 ? Number(v) : fallback);
+    const result = await env.LIMITS.get(env.LIMITS.idFromName("daily"))
+      .take(who, setting(env.DAILY_SEARCHES_PER_PERSON, DAILY_PER_PERSON), setting(env.DAILY_SEARCHES_TOTAL, DAILY_TOTAL));
+    if (!result.ok) {
+      return result.reason === "person"
+        ? "That's all your searches for today. Your bubble refills tomorrow."
+        : "Shuffle Bubble is resting for today. Come back tomorrow.";
+    }
+  }
+  return null;
+}
+
 // ---------- HTTP plumbing ----------
 
 function corsHeaders(request: Request, env: Env): Record<string, string> {
@@ -550,6 +580,10 @@ export default {
 
     const req = parseRequest(body);
     if (typeof req === "string") return json({ error: req }, 400, cors);
+
+    // Only searches cost money, so only they are limited.
+    const limited = await checkLimits(request, env);
+    if (limited) return json({ error: limited }, 429, cors);
 
     if (!env.ANTHROPIC_API_KEY) return json({ error: "Server is missing its ANTHROPIC_API_KEY secret." }, 500, cors);
 

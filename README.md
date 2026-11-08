@@ -46,6 +46,15 @@ In `docs/index.html`, set `API_URL` to the Worker URL from step 2.
 ### 4. Publish the page
 On GitHub: **Settings → Pages → Deploy from a branch →** pick the branch and the `/docs` folder. The site will be at `https://loudnoises1909-cloud.github.io/Telerama/`.
 
+## Limits
+
+Searches are the only part that costs money (Claude, about a cent each), so they're capped:
+
+- **5 per minute** per visitor (Cloudflare's rate limiter, `SEARCH_BURST` in `worker/wrangler.toml`).
+- **30 per visitor per day** and **300 per day in total** (`DAILY_SEARCHES_PER_PERSON` and `DAILY_SEARCHES_TOTAL` in `worker/wrangler.toml`, counted in a Durable Object). Days reset at midnight UTC.
+
+Raise the numbers in `wrangler.toml` and push to change them. Keep a spend limit (or auto-reload off) in the Anthropic console as the final backstop.
+
 ## Local development
 ```bash
 cd worker
