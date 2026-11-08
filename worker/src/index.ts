@@ -60,7 +60,7 @@ const ProfileSchema = z.object({
   year_to: z.number().int().nullable().describe("Latest release year, or null for no limit."),
   reference_titles: z
     .array(z.object({ title: z.string(), kind: z.enum(["movie", "tv"]) }))
-    .describe("4-6 real, well-known titles that strongly match, each marked as a movie or a tv series."),
+    .describe("Up to 6 real titles per wanted kind that strongly match, each marked as a movie or a tv series. Lead with the most obvious, on-the-nose matches."),
 });
 type Profile = z.infer<typeof ProfileSchema>;
 
@@ -69,7 +69,8 @@ Translate that into a search profile for a movie and TV database.
 - Music: infer the emotional tone, energy, and aesthetic of the artist or song, and map that to film tone.
 - Photos: read the palette, decor, era cues, lighting, and atmosphere; treat it as the setting the user wants to feel.
 - Eras: if the user picked decades, draw reference titles from those decades (spread across them if there are several). year_from/year_to are only used when no decades are picked: then use null unless the input clearly implies a period.
-- Reference titles must be real films or series you are confident exist, and only of the kinds the user wants.`;
+- Reference titles must be real films or series you are confident exist, and only of the kinds the user wants. Start with the titles a knowledgeable friend would name first (a show literally set where and how the user describes), then less obvious ones.
+- Keywords: put the most specific first (a place, a profession, a setting), as each one is searched on its own.`;
 
 async function buildProfile(client: Anthropic, req: RecommendRequest): Promise<Profile> {
   const parts: string[] = [];
@@ -166,6 +167,13 @@ function yearRanges(req: RecommendRequest, profile: Profile): YearRange[] {
   return [{ from: profile.year_from, to: profile.year_to }];
 }
 
+// Cloudflare's free plan allows 50 outbound requests per search. Worst case below, with films and
+// series: 4 keyword lookups + 2 × (6 title searches + 3 "similar" lists + 3 keyword queries + 2 genre
+// queries) = 32, plus 2 Claude calls and 6 streaming lookups = 40.
+const MAX_REFS = 6;
+const MAX_REF_RECS = 3;
+const MAX_KEYWORD_QUERIES = 3;
+
 async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[], kinds: Kind[]): Promise<Candidate[]> {
   type Page = { results: TmdbItem[] };
   const empty: Page = { results: [] };
@@ -173,59 +181,68 @@ async function gatherCandidates(env: Env, profile: Profile, ranges: YearRange[],
   // Keyword IDs are shared between films and series, so look them up once.
   const keywordIds = (
     await Promise.all(
-      profile.keywords.slice(0, 6).map(async (k) => {
+      profile.keywords.slice(0, 4).map(async (k) => {
         const r = await soft(tmdb<{ results: { id: number }[] }>(env, "/search/keyword", { query: k }), { results: [] });
         return r.results[0]?.id;
       }),
     )
   ).filter((id): id is number => id !== undefined);
 
-  // One discover query per decade so each picked era gets its own results; past four, one query spans them all.
-  const queryRanges =
-    ranges.length <= 4
-      ? ranges
-      : [{ from: Math.min(...ranges.map((r) => r.from ?? 0)), to: Math.max(...ranges.map((r) => r.to ?? 9999)) }];
   const inRange = (year: number | null) => !year || ranges.some((r) => (!r.from || year >= r.from) && (!r.to || year <= r.to));
+  // One window covering every picked era; results are then filtered to the eras themselves.
+  const span: YearRange = {
+    from: ranges.some((r) => !r.from) ? null : Math.min(...ranges.map((r) => r.from!)),
+    to: ranges.some((r) => !r.to) ? null : Math.max(...ranges.map((r) => r.to!)),
+  };
+  // Genre queries are the broadest, so give each era its own when there are only a couple.
+  const genreRanges = ranges.length <= 2 ? ranges : [span];
 
   async function forKind(kind: Kind): Promise<Candidate[]> {
-    // Reference titles → the title itself plus TMDB's "recommendations" for it.
-    const refs = profile.reference_titles.filter((r) => r.kind === kind).slice(0, 4);
-    const fromReferences = Promise.all(refs.map(async ({ title }) => {
-      const search = await soft(tmdb<Page>(env, `/search/${kind}`, { query: title, include_adult: "false" }), empty);
-      const hit = search.results[0];
-      if (!hit) return [];
-      const recs = await soft(tmdb<Page>(env, `/${kind}/${hit.id}/recommendations`), empty);
-      return [hit, ...recs.results.slice(0, 8)];
-    }));
-    // Runs alongside the discover queries below; if those throw first, don't leave this rejection unhandled.
-    fromReferences.catch(() => {});
-
-    const genreIds = profile.genres.map((g) => (kind === "movie" ? GENRES[g] : TV_GENRES[g])).filter((id): id is number => id !== null);
-    const base: Record<string, string> = {
-      include_adult: "false",
-      sort_by: "vote_average.desc",
-      "vote_count.gte": kind === "movie" ? "150" : "80", // series collect fewer votes
-    };
-    if (genreIds.length) base.with_genres = [...new Set(genreIds)].join("|"); // "|" = any of
     const dateField = kind === "movie" ? "primary_release_date" : "first_air_date";
-    const discover = (range: YearRange, extra: Record<string, string> = {}) => {
-      const params = { ...base, ...extra };
-      if (range.from) params[`${dateField}.gte`] = `${range.from}-01-01`;
-      if (range.to) params[`${dateField}.lte`] = `${range.to}-12-31`;
-      return soft(tmdb<Page>(env, `/discover/${kind}`, params), empty);
+    const discover = (range: YearRange, params: Record<string, string>) => {
+      const p: Record<string, string> = { include_adult: "false", ...params };
+      if (range.from) p[`${dateField}.gte`] = `${range.from}-01-01`;
+      if (range.to) p[`${dateField}.lte`] = `${range.to}-12-31`;
+      return soft(tmdb<Page>(env, `/discover/${kind}`, p), empty).then((r) => r.results);
     };
-    // Keyword-matched queries first: they're the most specific signal.
-    const discovers = [
-      ...(keywordIds.length ? queryRanges.map((r) => discover(r, { with_keywords: keywordIds.join("|") })) : []),
-      ...queryRanges.map((r) => discover(r)),
-    ];
 
-    const [refLists, discoverPages] = await Promise.all([fromReferences, Promise.all(discovers)]);
+    // 1. Claude's own suggestions, looked up by name: the most on-point source, so they always make the cut.
+    const refs = profile.reference_titles.filter((r) => r.kind === kind).slice(0, MAX_REFS);
+    const refHits = Promise.all(
+      refs.map(({ title }) => soft(tmdb<Page>(env, `/search/${kind}`, { query: title, include_adult: "false" }), empty).then((r) => r.results[0])),
+    );
+    // 2. TMDB's "similar" lists for the first few of them.
+    const refRecs = refHits.then((hits) =>
+      Promise.all(hits.filter(Boolean).slice(0, MAX_REF_RECS).map((h) =>
+        soft(tmdb<Page>(env, `/${kind}/${h!.id}/recommendations`), empty).then((r) => r.results.slice(0, 10)))),
+    );
+    // Runs alongside the discover queries below; if those throw first, don't leave this rejection unhandled.
+    refRecs.catch(() => {});
+
+    // 3. Each keyword on its own, best-known titles first ("florida" alone, not "florida" OR "murder").
+    const keywordLists = Promise.all(
+      keywordIds.slice(0, MAX_KEYWORD_QUERIES).map((id) =>
+        discover(span, { with_keywords: String(id), sort_by: "vote_count.desc" }).then((r) => r.slice(0, 12))),
+    );
+
+    // 4. Highly rated titles in the right genres: the broadest net, so it fills in last.
+    const genreIds = [...new Set(profile.genres.map((g) => (kind === "movie" ? GENRES[g] : TV_GENRES[g])).filter((id): id is number => id !== null))];
+    const genreLists = genreIds.length
+      ? Promise.all(genreRanges.map((r) =>
+          discover(r, { with_genres: genreIds.join("|"), sort_by: "vote_average.desc", "vote_count.gte": kind === "movie" ? "150" : "80" })))
+      : Promise.resolve([] as TmdbItem[][]);
+
+    const [hits, recs, byKeyword, byGenre] = await Promise.all([refHits, refRecs, keywordLists, genreLists]);
+
     const seen = new Map<string, Candidate>();
-    for (const item of [...discoverPages.flatMap((p) => p.results), ...refLists.flat()]) {
-      const c = toCandidate(kind, item);
+    const add = (item: TmdbItem | undefined) => {
+      const c = item && toCandidate(kind, item);
       if (c && !seen.has(c.key) && inRange(c.year)) seen.set(c.key, c);
-    }
+    };
+    hits.forEach(add);
+    // Then take from the other lists in turn, so no single broad query crowds the rest out.
+    const lists = [...byKeyword, ...recs, ...byGenre];
+    for (let i = 0; i < Math.max(0, ...lists.map((l) => l.length)); i++) for (const l of lists) add(l[i]);
     return [...seen.values()].slice(0, Math.floor(MAX_CANDIDATES / kinds.length));
   }
 
