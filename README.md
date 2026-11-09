@@ -2,7 +2,7 @@
 
 Find your flick. Get in your bubble. Film and series recommendations from a vibe, the music you're into, a photo of your room or a place, an era, or a plot idea.
 
-Voice, colours, type and logo rules: see [BRAND.md](BRAND.md).
+Voice, colours, type and logo rules: see [BRAND.md](BRAND.md). What's next: see [ROADMAP.md](ROADMAP.md).
 
 ## How it works
 
